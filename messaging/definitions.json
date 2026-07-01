@@ -1,0 +1,68 @@
+{
+  "rabbit_version": "3.12",
+  "vhosts": [
+    {
+      "name": "/"
+    }
+  ],
+  "queues": [
+    {
+      "name": "solicitud.creada.q",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "carga.aprobada.q",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "servicio.activo.q",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "smartgrid.exchange",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "smartgrid.exchange",
+      "vhost": "/",
+      "destination": "solicitud.creada.q",
+      "destination_type": "queue",
+      "routing_key": "solicitud.creada",
+      "arguments": {}
+    },
+    {
+      "source": "smartgrid.exchange",
+      "vhost": "/",
+      "destination": "carga.aprobada.q",
+      "destination_type": "queue",
+      "routing_key": "carga.aprobada",
+      "arguments": {}
+    },
+    {
+      "source": "smartgrid.exchange",
+      "vhost": "/",
+      "destination": "servicio.activo.q",
+      "destination_type": "queue",
+      "routing_key": "servicio.activo",
+      "arguments": {}
+    }
+  ]
+}
