@@ -96,7 +96,7 @@ def crear_solicitud(payload: SolicitudRequest):
             "timestamp": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
         }
         channel.basic_publish(
-            exchange="",
+            exchange="smartgrid.exchange",
             routing_key=QUEUE_NAME,
             body=json.dumps(event, ensure_ascii=False).encode("utf-8"),
             properties=pika.BasicProperties(

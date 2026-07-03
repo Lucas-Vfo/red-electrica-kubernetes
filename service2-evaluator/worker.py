@@ -102,7 +102,7 @@ def resolve_capacity(id_domicilio: int, potencia: float, db_conn: Optional[objec
 
 def publish_result(channel: pika.channel.Channel, event: dict) -> None:
     channel.basic_publish(
-        exchange="",
+        exchange="smartgrid.exchange",
         routing_key=OUTPUT_QUEUE,
         body=json.dumps(event, ensure_ascii=False).encode("utf-8"),
         properties=pika.BasicProperties(

@@ -108,7 +108,7 @@ def save_service_state(event: dict, db_conn: Optional[object]) -> None:
 
 def publish_result(channel: pika.channel.Channel, event: dict) -> None:
     channel.basic_publish(
-        exchange="",
+        exchange="smartgrid.exchange",
         routing_key=OUTPUT_QUEUE,
         body=json.dumps(event, ensure_ascii=False).encode("utf-8"),
         properties=pika.BasicProperties(
