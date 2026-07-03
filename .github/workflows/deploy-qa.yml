@@ -1,0 +1,118 @@
+# =============================================================================
+# deploy-qa.yml  —  CI/CD del entorno QA  (Semana 4)
+# Disparo: cada push a la rama "develop".
+# Flujo:  checkout -> docker build (Alpine) -> push a GHCR -> kubectl apply
+#         -> set image -> rollout status   (CERO despliegue manual).
+# Destino: namespace grupo4-qa  /  dominio qa.grupo4.uta.cl
+#
+# Secrets requeridos en GitHub (Settings > Secrets and variables > Actions):
+#   DOCKER_USERNAME  -> usuario de GitHub (para login en ghcr.io)
+#   DOCKER_PASSWORD  -> Personal Access Token con permiso write:packages
+#   KUBECONFIG       -> kubeconfig de la VM en base64  (cat ~/.kube/config | base64 -w0)
+#   SERVER_IP        -> 146.83.102.23  (IP pública del API server del clúster)
+# =============================================================================
+name: Deploy QA
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch: {}        # permite ejecutarlo a mano desde la pestaña Actions
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) Construir y publicar las 5 imágenes de aplicación en GHCR
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write          # necesario para empujar a ghcr.io
+    strategy:
+      matrix:
+        component: [frontend, gateway, servicio1, servicio2, servicio3]
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Owner de GHCR en minúsculas
+        id: vars
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Login en GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Preparar Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push  (${{ matrix.component }})
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.component }}    # carpeta con el Dockerfile (Rol 3 / Rol 4)
+          push: true
+          tags: |
+            ghcr.io/${{ steps.vars.outputs.owner }}/smartgrid-${{ matrix.component }}:qa
+            ghcr.io/${{ steps.vars.outputs.owner }}/smartgrid-${{ matrix.component }}:${{ github.sha }}
+
+  # ---------------------------------------------------------------------------
+  # 2) Desplegar en el clúster K3s (namespace grupo4-qa)
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: qa            # usa los secrets del Environment "qa" (VM/clúster de QA)
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Instalar kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configurar acceso al clúster
+        run: |
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > kubeconfig.yaml
+          export KUBECONFIG=$PWD/kubeconfig.yaml
+          # Apuntar al API server por su IP pública y aceptar su certificado
+          kubectl config set-cluster default --server="https://${{ secrets.SERVER_IP }}:6443"
+          kubectl config set clusters.default.insecure-skip-tls-verify true
+          kubectl config unset clusters.default.certificate-authority-data
+          echo "KUBECONFIG=$PWD/kubeconfig.yaml" >> "$GITHUB_ENV"
+
+      - name: Owner de GHCR en minúsculas
+        id: vars
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Crear namespaces y topes de recursos
+        run: kubectl apply -f k8s/00-namespaces.yaml
+
+      - name: Asegurar pull secret de GHCR (paquetes privados)
+        run: |
+          kubectl -n grupo4-qa create secret docker-registry ghcr-pull \
+            --docker-server=ghcr.io \
+            --docker-username=${{ secrets.DOCKER_USERNAME }} \
+            --docker-password=${{ secrets.DOCKER_PASSWORD }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n grupo4-qa patch serviceaccount default \
+            -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+
+      - name: Aplicar manifiestos de QA
+        run: kubectl apply -f k8s/qa/
+
+      - name: Forzar rollout a la imagen recién construida (tag = SHA)
+        run: |
+          P=ghcr.io/${{ steps.vars.outputs.owner }}/smartgrid
+          kubectl -n grupo4-qa set image deployment/frontend  frontend=$P-frontend:${{ github.sha }}
+          kubectl -n grupo4-qa set image deployment/gateway   gateway=$P-gateway:${{ github.sha }}
+          kubectl -n grupo4-qa set image deployment/servicio1 servicio1=$P-servicio1:${{ github.sha }}
+          kubectl -n grupo4-qa set image deployment/servicio2 servicio2=$P-servicio2:${{ github.sha }}
+          kubectl -n grupo4-qa set image deployment/servicio3 servicio3=$P-servicio3:${{ github.sha }}
+
+      - name: Esperar a que todo quede disponible
+        run: |
+          for d in db1 db2 db3 rabbitmq servicio1 servicio2 servicio3 frontend gateway; do
+            kubectl -n grupo4-qa rollout status deployment/$d --timeout=180s
+          done
+          kubectl get pods,svc,ingress -n grupo4-qa
