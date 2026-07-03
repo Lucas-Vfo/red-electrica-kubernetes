@@ -7,21 +7,21 @@
   ],
   "queues": [
     {
-      "name": "solicitud.creada.q",
+      "name": "solicitud.creada",
       "vhost": "/",
       "durable": true,
       "auto_delete": false,
       "arguments": {}
     },
     {
-      "name": "carga.aprobada.q",
+      "name": "carga.aprobada",
       "vhost": "/",
       "durable": true,
       "auto_delete": false,
       "arguments": {}
     },
     {
-      "name": "servicio.activo.q",
+      "name": "servicio.activo",
       "vhost": "/",
       "durable": true,
       "auto_delete": false,
