@@ -1,0 +1,90 @@
+# =============================================================================
+# namespaces.yaml
+# Crea los DOS namespaces propios + topes de recursos para NO afectar a otros
+# grupos en el clúster K3s compartido.
+#
+# Aplicar UNA sola vez (no depende del entorno):
+#   kubectl apply -f k8s/namespaces.yaml
+#
+# Verificar:
+#   kubectl get ns | grep grupo4
+#   kubectl describe resourcequota -n grupo4-qa
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: grupo4-qa
+  labels:
+    grupo: grupo4
+    entorno: qa
+    app.kubernetes.io/managed-by: grupo4
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: grupo4-prod
+  labels:
+    grupo: grupo4
+    entorno: prod
+    app.kubernetes.io/managed-by: grupo4
+---
+# --- Límites por defecto: cualquier contenedor sin "resources" hereda estos
+#     valores. Así el ResourceQuota nunca rechaza un Pod por falta de límites.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: limites-defecto
+  namespace: grupo4-qa
+spec:
+  limits:
+    - type: Container
+      default:          # límite si el contenedor no declara uno
+        cpu: 250m
+        memory: 256Mi
+      defaultRequest:   # request si el contenedor no declara uno
+        cpu: 50m
+        memory: 64Mi
+---
+# --- Tope total del namespace: garantiza que jamás se consuma de más en el clúster compartido.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cuota-grupo4
+  namespace: grupo4-qa
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 3Gi
+    limits.cpu: "4"
+    limits.memory: 5Gi
+    persistentvolumeclaims: "8"
+    pods: "30"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: limites-defecto
+  namespace: grupo4-prod
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 250m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cuota-grupo4
+  namespace: grupo4-prod
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 3Gi
+    limits.cpu: "4"
+    limits.memory: 5Gi
+    persistentvolumeclaims: "8"
+    pods: "30"

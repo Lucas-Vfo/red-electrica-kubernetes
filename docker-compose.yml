@@ -1,0 +1,202 @@
+# =============================================================================
+# docker-compose.yml
+# -----------------------------------------------------------------------------
+#
+# Uso:
+#   1) Copiar variables:   cp .env.example .env
+#   2) Levantar todo:      docker compose up -d --build
+#   3) Ver estado:         docker compose ps
+#   4) Ver logs unificados:docker compose logs -f
+#   5) Frontend local:     http://localhost:8080
+#   6) RabbitMQ UI local:  http://localhost:15672  (user/pass del .env)
+#   7) Apagar:             docker compose down         (conserva datos)
+#                          docker compose down -v      (borra datos)
+#
+# Reglas respetadas: todas las imágenes son Alpine; las 3 DB están aisladas
+# (cada servicio sólo conoce su propia DB); dos redes separan frontend/backend.
+# =============================================================================
+services:
+
+  # ---------- API Gateway (Nginx reverse proxy) ----------
+  gateway:
+    build: ./gateway            # debe contener Dockerfile (FROM nginx:alpine)
+    image: smartgrid-gateway:local
+    container_name: sg-gateway
+    ports:
+      - "8080:80"             
+    depends_on:
+      - frontend
+      - servicio1
+    networks:
+      - frontend_net
+      - backend_net
+    restart: unless-stopped
+
+  # ---------- Frontend (Nginx estático) ------------------
+  frontend:
+    build: ./frontend           # debe contener Dockerfile (FROM nginx:alpine)
+    image: smartgrid-frontend:local
+    container_name: sg-frontend
+    networks:
+      - frontend_net
+    restart: unless-stopped
+
+  # ---------- Servicio 1: Solicitud de Demanda (REST + Eventos) -------
+  servicio1:
+    build: ./servicio1          # FROM python:3.12-alpine
+    image: smartgrid-servicio1:local
+    container_name: sg-servicio1
+    environment:
+      DB_HOST: db1
+      DB_PORT: "5432"
+      DB_NAME: solicitudes
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
+    depends_on:
+      db1:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend_net
+    restart: unless-stopped
+
+  # ---------- Servicio 2: Control de Capacidad (Event Driven) ---------
+  servicio2:
+    build: ./servicio2
+    image: smartgrid-servicio2:local
+    container_name: sg-servicio2
+    environment:
+      DB_HOST: db2
+      DB_PORT: "5432"
+      DB_NAME: capacidad
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
+    depends_on:
+      db2:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend_net
+    restart: unless-stopped
+
+  # ---------- Servicio 3: Tarifador de Sesión (Event Driven) ----------
+  servicio3:
+    build: ./servicio3
+    image: smartgrid-servicio3:local
+    container_name: sg-servicio3
+    environment:
+      DB_HOST: db3
+      DB_PORT: "5432"
+      DB_NAME: facturacion
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
+    depends_on:
+      db3:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend_net
+    restart: unless-stopped
+
+  # ---------- Message Broker (RabbitMQ) -------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management-alpine     # imagen Alpine oficial
+    container_name: sg-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    ports:
+      - "15672:15672"           # panel de administración local
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend_net
+    restart: unless-stopped
+
+  # ---------- DB 1 (Servicio 1) ------------------------------
+  db1:
+    image: postgres:15-alpine
+    container_name: sg-db1
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: solicitudes
+    volumes:
+      - db1_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d solicitudes"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend_net
+    restart: unless-stopped
+
+  # ---------- DB 2 (Servicio 2) -------------------------------------
+  db2:
+    image: postgres:15-alpine
+    container_name: sg-db2
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: capacidad
+    volumes:
+      - db2_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d capacidad"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend_net
+    restart: unless-stopped
+
+  # ---------- DB 3 (Servicio 3) -------------------------------------
+  db3:
+    image: postgres:15-alpine
+    container_name: sg-db3
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: facturacion
+    volumes:
+      - db3_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d facturacion"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend_net
+    restart: unless-stopped
+
+# --- Dos redes separadas ---------------
+networks:
+  frontend_net:
+    driver: bridge
+  backend_net:
+    driver: bridge
+
+# --- Persistencia local de las 3 DB ----------------------------------------
+volumes:
+  db1_data:
+  db2_data:
+  db3_data:

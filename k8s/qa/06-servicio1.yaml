@@ -1,0 +1,82 @@
+# =============================================================================
+# 06-servicio1.yaml  (namespace grupo4-qa)  —  Servicio 1: Solicitud de Demanda
+# REST (:3001) + publica evento "solicitud.creada" en RabbitMQ. Sólo usa db1.
+# Imagen construida por CI y publicada en GHCR (la rama define el tag).
+# PROD: cambiar namespace -> grupo4-prod  e  imagen :qa -> :prod.
+# -----------------------------------------------------------------------------
+# OJO (owner GHCR): reemplazar "grupo4" por el owner/org real de GitHub en
+# minúsculas. El workflow de CI lo sobre-escribe solo con "kubectl set image".
+# Las variables de entorno deben COINCIDIR con las que espera Rol 3.
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get pods,svc -n grupo4-qa -l app=servicio1
+#   kubectl logs -n grupo4-qa deploy/servicio1
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: servicio1
+  namespace: grupo4-qa
+  labels:
+    app: servicio1
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: qa
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: servicio1 }
+  template:
+    metadata:
+      labels:
+        app: servicio1
+        app.kubernetes.io/part-of: smartgrid
+        entorno: qa
+    spec:
+      containers:
+        - name: servicio1
+          image: ghcr.io/grupo4/smartgrid-servicio1:qa
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3001
+          env:
+            - { name: DB_HOST, value: "db1" }
+            - { name: DB_NAME, value: "solicitudes" }
+            - name: DB_PORT
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: DB_PORT } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_USER } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
+            - name: RABBITMQ_HOST
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_HOST } }
+            - name: RABBITMQ_PORT
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_PORT } }
+            - name: RABBITMQ_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_USER } }
+            - name: RABBITMQ_PASSWORD
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_PASS } }
+          readinessProbe:
+            tcpSocket: { port: 3001 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 3001 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: servicio1
+  namespace: grupo4-qa
+  labels: { app: servicio1, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+spec:
+  type: ClusterIP
+  selector: { app: servicio1 }
+  ports:
+    - port: 3001
+      targetPort: 3001

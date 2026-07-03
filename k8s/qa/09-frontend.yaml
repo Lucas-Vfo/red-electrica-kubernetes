@@ -1,0 +1,57 @@
+# =============================================================================
+# 09-frontend.yaml  (namespace grupo4-qa)  —  Frontend Nginx estático
+# Deployment (imagen GHCR) + Service ClusterIP.
+# PROD: namespace -> grupo4-prod ; imagen :qa -> :prod.
+# Verificar: kubectl get pods,svc -n grupo4-qa -l app=frontend
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: grupo4-qa
+  labels:
+    app: frontend
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: qa
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: frontend }
+  template:
+    metadata:
+      labels:
+        app: frontend
+        app.kubernetes.io/part-of: smartgrid
+        entorno: qa
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/grupo4/smartgrid-frontend:qa     # FROM nginx:alpine
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            tcpSocket: { port: 80 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 80 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits:   { cpu: 100m, memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: grupo4-qa
+  labels: { app: frontend, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+spec:
+  type: ClusterIP
+  selector: { app: frontend }
+  ports:
+    - port: 80
+      targetPort: 80
