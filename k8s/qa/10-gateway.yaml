@@ -1,0 +1,58 @@
+# =============================================================================
+# 10-gateway.yaml  (namespace grupo4-qa)  —  API Gateway / Reverse Proxy
+# Único punto de entrada interno. El Ingress apunta a este Service.
+# El proxy debe reenviar:  /  -> frontend:80   /api -> servicio1:3001
+# PROD: namespace -> grupo4-prod ; imagen :qa -> :prod.
+# Verificar: kubectl get pods,svc -n grupo4-qa -l app=gateway
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: grupo4-qa
+  labels:
+    app: gateway
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: qa
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: gateway }
+  template:
+    metadata:
+      labels:
+        app: gateway
+        app.kubernetes.io/part-of: smartgrid
+        entorno: qa
+    spec:
+      containers:
+        - name: gateway
+          image: ghcr.io/grupo4/smartgrid-gateway:qa      # FROM nginx:alpine
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            tcpSocket: { port: 80 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 80 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits:   { cpu: 100m, memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: grupo4-qa
+  labels: { app: gateway, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+spec:
+  type: ClusterIP
+  selector: { app: gateway }
+  ports:
+    - port: 80
+      targetPort: 80
