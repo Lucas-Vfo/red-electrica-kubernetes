@@ -1,0 +1,354 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+:root {
+    --background: #071426;
+    --background-secondary: #102b49;
+    --card: #ffffff;
+    --primary: #1565c0;
+    --primary-hover: #0d4f99;
+    --text: #1d2939;
+    --text-light: #667085;
+    --border: #d0d5dd;
+    --success: #16803c;
+    --success-background: #ecfdf3;
+    --error: #c62828;
+    --error-background: #fff1f1;
+}
+
+body {
+    min-height: 100vh;
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+    background:
+        radial-gradient(
+            circle at top,
+            var(--background-secondary),
+            var(--background)
+        );
+
+    color: var(--text);
+}
+
+.app-container {
+    min-height: 100vh;
+
+    display: flex;
+
+    justify-content: center;
+
+    align-items: center;
+
+    padding: 32px 20px;
+}
+
+.smart-grid-card {
+    width: 100%;
+
+    max-width: 560px;
+
+    background: var(--card);
+
+    border-radius: 20px;
+
+    padding: 38px;
+
+    box-shadow:
+        0 24px 60px
+        rgba(0, 0, 0, 0.35);
+}
+
+.app-header {
+    display: flex;
+
+    align-items: center;
+
+    gap: 16px;
+
+    margin-bottom: 25px;
+}
+
+.icon-container {
+    width: 58px;
+
+    height: 58px;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    border-radius: 14px;
+
+    background: #e8f1ff;
+
+    font-size: 30px;
+}
+
+.app-header h1 {
+    font-size: 30px;
+
+    color: #102b49;
+
+    margin-bottom: 4px;
+}
+
+.app-header p {
+    color: var(--text-light);
+
+    font-size: 14px;
+}
+
+.network-status {
+    display: flex;
+
+    align-items: center;
+
+    gap: 9px;
+
+    padding: 12px 15px;
+
+    margin-bottom: 28px;
+
+    border-radius: 10px;
+
+    background: var(--success-background);
+
+    color: var(--success);
+
+    font-size: 14px;
+
+    font-weight: bold;
+}
+
+.status-indicator {
+    width: 10px;
+
+    height: 10px;
+
+    border-radius: 50%;
+
+    background: var(--success);
+}
+
+.form-group {
+    margin-bottom: 22px;
+}
+
+label {
+    display: block;
+
+    margin-bottom: 9px;
+
+    font-size: 14px;
+
+    font-weight: bold;
+}
+
+input {
+    width: 100%;
+
+    height: 50px;
+
+    padding: 0 14px;
+
+    border: 1px solid var(--border);
+
+    border-radius: 9px;
+
+    color: var(--text);
+
+    font-size: 16px;
+
+    transition:
+        border-color 0.2s,
+        box-shadow 0.2s;
+}
+
+input:focus {
+    outline: none;
+
+    border-color: var(--primary);
+
+    box-shadow:
+        0 0 0 3px
+        rgba(21, 101, 192, 0.15);
+}
+
+.input-unit {
+    position: relative;
+}
+
+.input-unit input {
+    padding-right: 60px;
+}
+
+.input-unit span {
+    position: absolute;
+
+    top: 50%;
+
+    right: 17px;
+
+    transform: translateY(-50%);
+
+    color: var(--text-light);
+
+    font-weight: bold;
+}
+
+button {
+    width: 100%;
+
+    min-height: 52px;
+
+    border: none;
+
+    border-radius: 10px;
+
+    background: var(--primary);
+
+    color: #ffffff;
+
+    font-size: 16px;
+
+    font-weight: bold;
+
+    cursor: pointer;
+
+    transition:
+        background 0.2s,
+        transform 0.1s;
+}
+
+button:hover {
+    background: var(--primary-hover);
+}
+
+button:active {
+    transform: scale(0.99);
+}
+
+button:disabled {
+    opacity: 0.65;
+
+    cursor: not-allowed;
+}
+
+.estado-container {
+    margin-top: 30px;
+
+    border-top: 1px solid var(--border);
+
+    padding-top: 25px;
+}
+
+.estado-container h2 {
+    margin-bottom: 15px;
+
+    color: #102b49;
+
+    font-size: 18px;
+}
+
+.status-box {
+    display: flex;
+
+    align-items: center;
+
+    gap: 15px;
+
+    padding: 16px;
+
+    background: #f8fafc;
+
+    border-radius: 10px;
+}
+
+.estado-mensaje {
+    font-weight: bold;
+
+    margin-bottom: 4px;
+}
+
+.estado-detalle {
+    color: var(--text-light);
+
+    font-size: 13px;
+}
+
+.loader {
+    width: 24px;
+
+    height: 24px;
+
+    border: 3px solid #d9e4f2;
+
+    border-top-color: var(--primary);
+
+    border-radius: 50%;
+
+    animation: loading 0.8s linear infinite;
+
+    flex-shrink: 0;
+}
+
+.service-detail {
+    margin-top: 15px;
+}
+
+.service-detail p {
+    padding: 7px 0;
+
+    color: var(--text-light);
+
+    font-size: 14px;
+}
+
+.service-detail strong {
+    color: var(--text);
+}
+
+.hidden {
+    display: none;
+}
+
+.success-box {
+    background: var(--success-background);
+}
+
+.error-box {
+    background: var(--error-background);
+}
+
+.success-text {
+    color: var(--success);
+}
+
+.error-text {
+    color: var(--error);
+}
+
+@keyframes loading {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (max-width: 600px) {
+    .smart-grid-card {
+        padding: 25px;
+    }
+
+    .app-header h1 {
+        font-size: 25px;
+    }
+}
