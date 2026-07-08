@@ -1,36 +1,37 @@
 # =============================================================================
-# 08-servicio3.yaml  (namespace grupo4-qa)  —  Servicio 3: Tarifador de Sesión
-# Event Driven (:3003). Consume "carga.aprobada", publica "servicio.activo".
-# Sólo usa db3.  PROD: namespace -> grupo4-prod ; imagen :qa -> :prod.
-# Verificar: kubectl logs -n grupo4-qa deploy/servicio3
+# 08-service3-manager.yaml  (namespace grupo4-qa)  —  Servicio 3: Tarifador de Sesión
+# Worker pika PURO: consume `carga.aprobada`, registra la facturación en db3 y
+# publica `servicio.activo`. Sin Service ni probes TCP (no abre puertos).
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get pods -n grupo4-qa -l app=service3-manager
+#   kubectl logs -n grupo4-qa deploy/service3-manager -f
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: servicio3
+  name: service3-manager
   namespace: grupo4-qa
   labels:
-    app: servicio3
+    app: service3-manager
     app.kubernetes.io/part-of: smartgrid
     app.kubernetes.io/managed-by: grupo4
     entorno: qa
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: servicio3 }
+    matchLabels: { app: service3-manager }
   template:
     metadata:
       labels:
-        app: servicio3
+        app: service3-manager
         app.kubernetes.io/part-of: smartgrid
         entorno: qa
     spec:
       containers:
-        - name: servicio3
-          image: ghcr.io/grupo4/smartgrid-servicio3:qa
+        - name: service3-manager
+          image: ghcr.io/lucas-vfo/smartgrid-service3-manager:qa
           imagePullPolicy: Always
-          ports:
-            - containerPort: 3003
           env:
             - { name: DB_HOST, value: "db3" }
             - { name: DB_NAME, value: "facturacion" }
@@ -38,7 +39,7 @@ spec:
               valueFrom: { configMapKeyRef: { name: smartgrid-config, key: DB_PORT } }
             - name: DB_USER
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_USER } }
-            - name: DB_PASSWORD
+            - name: DB_PASS
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
             - name: RABBITMQ_HOST
               valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_HOST } }
@@ -46,29 +47,14 @@ spec:
               valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_PORT } }
             - name: RABBITMQ_USER
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_USER } }
-            - name: RABBITMQ_PASSWORD
+            - name: RABBITMQ_PASS
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_PASS } }
-          readinessProbe:
-            tcpSocket: { port: 3003 }
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            - name: TARIFA_POR_KW_CLP
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: TARIFA_POR_KW_CLP } }
           livenessProbe:
-            tcpSocket: { port: 3003 }
-            initialDelaySeconds: 30
-            periodSeconds: 20
+            exec: { command: ["sh","-c","pgrep -f worker.py"] }
+            initialDelaySeconds: 20
+            periodSeconds: 30
           resources:
-            requests: { cpu: 50m, memory: 64Mi }
+            requests: { cpu: 25m, memory: 64Mi }
             limits:   { cpu: 200m, memory: 128Mi }
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: servicio3
-  namespace: grupo4-qa
-  labels: { app: servicio3, app.kubernetes.io/part-of: smartgrid, entorno: qa }
-spec:
-  type: ClusterIP
-  selector: { app: servicio3 }
-  ports:
-    - port: 3003
-      targetPort: 3003

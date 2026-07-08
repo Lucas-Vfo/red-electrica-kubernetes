@@ -20,9 +20,9 @@ metadata:
 type: Opaque
 stringData:
   POSTGRES_USER: smartgrid
-  POSTGRES_PASSWORD: "qa_CAMBIAR_esta_clave_2026"     # PROD: usar otra clave fuerte
+  POSTGRES_PASSWORD: "alumnosdic1"
   RABBITMQ_DEFAULT_USER: smartgrid
-  RABBITMQ_DEFAULT_PASS: "qa_CAMBIAR_esta_clave_2026" # PROD: usar otra clave fuerte
+  RABBITMQ_DEFAULT_PASS: "alumnosdic1"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -34,7 +34,62 @@ metadata:
     app.kubernetes.io/managed-by: grupo4
     entorno: qa
 data:
-  # Hosts internos (nombres de los Services ClusterIP) y puertos comunes.
+  # Hosts internos (nombres de los Services ClusterIP) y parámetros comunes.
   RABBITMQ_HOST: "rabbitmq"
   RABBITMQ_PORT: "5672"
   DB_PORT: "5432"
+  SECTORES: "3"              
+  TARIFA_POR_KW_CLP: "150"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db1-init
+  namespace: grupo4-qa
+  labels: { app: db1, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+data:
+  init-solicitud.sql: |
+    CREATE TABLE IF NOT EXISTS solicitudes (
+        id_solicitud VARCHAR(50) PRIMARY KEY,
+        id_domicilio INT NOT NULL,
+        potencia_solicitada_kw DECIMAL(6,2) NOT NULL,
+        estado VARCHAR(20) NOT NULL DEFAULT 'En evaluación',
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE SEQUENCE IF NOT EXISTS solicitudes_seq START 1;
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db2-init
+  namespace: grupo4-qa
+  labels: { app: db2, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+data:
+  init-capacidad.sql: |
+    CREATE TABLE IF NOT EXISTS transformadores (
+        id_transformador INT PRIMARY KEY,
+        capacidad_total_kw DECIMAL(8,2) NOT NULL,
+        capacidad_restante_kw DECIMAL(8,2) NOT NULL
+    );
+    INSERT INTO transformadores (id_transformador, capacidad_total_kw, capacidad_restante_kw)
+    VALUES
+        (1, 100.00, 100.00),
+        (2, 100.00, 100.00),
+        (3, 100.00, 100.00)
+    ON CONFLICT (id_transformador) DO NOTHING;
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db3-init
+  namespace: grupo4-qa
+  labels: { app: db3, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+data:
+  init-tarifador.sql: |
+    CREATE TABLE IF NOT EXISTS facturacion_servicios (
+        id_solicitud VARCHAR(50) PRIMARY KEY,
+        id_domicilio INT NOT NULL,
+        tarifa_por_kw_clp DECIMAL(10,2) NOT NULL,
+        estado_servicio VARCHAR(20) NOT NULL,
+        timestamp_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );

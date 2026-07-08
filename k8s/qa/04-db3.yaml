@@ -57,6 +57,9 @@ spec:
           volumeMounts:
             - name: datos
               mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
           readinessProbe:
             exec: { command: ["sh","-c","pg_isready -U $POSTGRES_USER -d facturacion"] }
             initialDelaySeconds: 10
@@ -64,14 +67,17 @@ spec:
           livenessProbe:
             exec: { command: ["sh","-c","pg_isready -U $POSTGRES_USER -d facturacion"] }
             initialDelaySeconds: 30
-            periodSeconds: 15
+            periodSeconds: 20
           resources:
             requests: { cpu: 50m, memory: 128Mi }
-            limits:   { cpu: 250m, memory: 256Mi }
+            limits:   { cpu: 300m, memory: 256Mi }
       volumes:
         - name: datos
           persistentVolumeClaim:
             claimName: db3-pvc
+        - name: init-sql
+          configMap:
+            name: db3-init
 ---
 apiVersion: v1
 kind: Service

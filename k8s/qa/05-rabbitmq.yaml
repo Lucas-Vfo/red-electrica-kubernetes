@@ -6,7 +6,8 @@
 # Verificar:
 #   kubectl get pods,svc -n grupo4-qa -l app=rabbitmq
 #   kubectl exec -n grupo4-qa deploy/rabbitmq -- rabbitmq-diagnostics -q ping
-#   kubectl port-forward -n grupo4-qa svc/rabbitmq 15672:15672   # -> http://localhost:15672
+#   kubectl exec -n grupo4-qa deploy/rabbitmq -- rabbitmqctl list_bindings
+#   kubectl port-forward -n grupo4-qa svc/rabbitmq 15672:15672  # panel web
 # =============================================================================
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -33,6 +34,8 @@ metadata:
     entorno: qa
 spec:
   replicas: 1
+  strategy:
+    type: Recreate                      
   selector:
     matchLabels: { app: rabbitmq }
   template:
@@ -53,11 +56,9 @@ spec:
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_USER } }
             - name: RABBITMQ_DEFAULT_PASS
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_PASS } }
-          
           volumeMounts:
             - name: datos-rabbit
               mountPath: /var/lib/rabbitmq
-
           readinessProbe:
             exec: { command: ["rabbitmq-diagnostics","-q","ping"] }
             initialDelaySeconds: 15
@@ -69,7 +70,6 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits:   { cpu: 500m, memory: 512Mi }
-      
       volumes:
         - name: datos-rabbit
           persistentVolumeClaim:

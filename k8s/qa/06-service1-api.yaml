@@ -1,44 +1,43 @@
 # =============================================================================
-# 06-servicio1.yaml  (namespace grupo4-qa)  —  Servicio 1: Solicitud de Demanda
-# REST (:3001) + publica evento "solicitud.creada" en RabbitMQ. Sólo usa db1.
-# Imagen construida por CI y publicada en GHCR (la rama define el tag).
-# PROD: cambiar namespace -> grupo4-prod  e  imagen :qa -> :prod.
-# -----------------------------------------------------------------------------
-# OJO (owner GHCR): reemplazar "grupo4" por el owner/org real de GitHub en
-# minúsculas. El workflow de CI lo sobre-escribe solo con "kubectl set image".
-# Las variables de entorno deben COINCIDIR con las que espera Rol 3.
+# 06-service1-api.yaml  (namespace grupo4-qa)  —  Servicio 1: Solicitud de Demanda
+# FastAPI/gunicorn escucha en el puerto 8000 (REST) y además consume el evento
+# `servicio.activo` para actualizar el estado del historial en db1.
+#
+# El Service se llama "service1-api" y publica 3001 -> 8000 para calzar con el
+# proxy del gateway (nginx.conf: proxy_pass http://service1-api:3001/)
+#
 # -----------------------------------------------------------------------------
 # Verificar:
-#   kubectl get pods,svc -n grupo4-qa -l app=servicio1
-#   kubectl logs -n grupo4-qa deploy/servicio1
+#   kubectl get pods,svc -n grupo4-qa -l app=service1-api
+#   kubectl logs -n grupo4-qa deploy/service1-api
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: servicio1
+  name: service1-api
   namespace: grupo4-qa
   labels:
-    app: servicio1
+    app: service1-api
     app.kubernetes.io/part-of: smartgrid
     app.kubernetes.io/managed-by: grupo4
     entorno: qa
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: servicio1 }
+    matchLabels: { app: service1-api }
   template:
     metadata:
       labels:
-        app: servicio1
+        app: service1-api
         app.kubernetes.io/part-of: smartgrid
         entorno: qa
     spec:
       containers:
-        - name: servicio1
-          image: ghcr.io/grupo4/smartgrid-servicio1:qa
+        - name: service1-api
+          image: ghcr.io/lucas-vfo/smartgrid-service1-api:qa
           imagePullPolicy: Always
           ports:
-            - containerPort: 3001
+            - containerPort: 8000
           env:
             - { name: DB_HOST, value: "db1" }
             - { name: DB_NAME, value: "solicitudes" }
@@ -46,7 +45,7 @@ spec:
               valueFrom: { configMapKeyRef: { name: smartgrid-config, key: DB_PORT } }
             - name: DB_USER
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_USER } }
-            - name: DB_PASSWORD
+            - name: DB_PASS                      
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
             - name: RABBITMQ_HOST
               valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_HOST } }
@@ -54,29 +53,29 @@ spec:
               valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_PORT } }
             - name: RABBITMQ_USER
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_USER } }
-            - name: RABBITMQ_PASSWORD
+            - name: RABBITMQ_PASS                # el código lee RABBITMQ_PASS
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_PASS } }
           readinessProbe:
-            tcpSocket: { port: 3001 }
+            httpGet: { path: /healthz, port: 8000 }
             initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
-            tcpSocket: { port: 3001 }
+            httpGet: { path: /healthz, port: 8000 }
             initialDelaySeconds: 30
             periodSeconds: 20
           resources:
-            requests: { cpu: 50m, memory: 64Mi }
-            limits:   { cpu: 200m, memory: 128Mi }
+            requests: { cpu: 50m, memory: 96Mi }
+            limits:   { cpu: 250m, memory: 192Mi }
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: servicio1
+  name: service1-api
   namespace: grupo4-qa
-  labels: { app: servicio1, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+  labels: { app: service1-api, app.kubernetes.io/part-of: smartgrid, entorno: qa }
 spec:
   type: ClusterIP
-  selector: { app: servicio1 }
+  selector: { app: service1-api }
   ports:
-    - port: 3001
-      targetPort: 3001
+    - port: 3001          
+      targetPort: 8000
