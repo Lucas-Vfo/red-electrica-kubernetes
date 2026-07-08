@@ -149,6 +149,52 @@
 
         </section>
 
+        <section class="smart-grid-card historial-card">
+
+            <header class="historial-header">
+
+                <h2>Historial de solicitudes</h2>
+
+                <span
+                    id="historialEstado"
+                    class="historial-actualizacion"
+                >
+                    Conectando…
+                </span>
+
+            </header>
+
+            <div class="historial-tabla-contenedor">
+
+                <table class="historial-tabla">
+
+                    <thead>
+                        <tr>
+                            <th>ID solicitud</th>
+                            <th>Domicilio</th>
+                            <th>Potencia</th>
+                            <th>Estado</th>
+                            <th>Hora</th>
+                        </tr>
+                    </thead>
+
+                    <tbody id="historialBody">
+                        <tr>
+                            <td
+                                colspan="5"
+                                class="historial-vacio"
+                            >
+                                Cargando historial…
+                            </td>
+                        </tr>
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </section>
+
     </main>
 
     <script src="app.js"></script>

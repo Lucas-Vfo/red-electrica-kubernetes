@@ -5,3 +5,5 @@ CREATE TABLE IF NOT EXISTS solicitudes (
     estado VARCHAR(20) NOT NULL DEFAULT 'En evaluación',
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE SEQUENCE IF NOT EXISTS solicitudes_seq START 1;

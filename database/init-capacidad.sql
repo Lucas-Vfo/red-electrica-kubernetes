@@ -5,5 +5,8 @@ CREATE TABLE IF NOT EXISTS transformadores (
 );
 
 INSERT INTO transformadores (id_transformador, capacidad_total_kw, capacidad_restante_kw)
-VALUES (1, 100.00, 100.00)
+VALUES
+    (1, 100.00, 100.00),
+    (2, 100.00, 100.00),
+    (3, 100.00, 100.00)
 ON CONFLICT (id_transformador) DO NOTHING;
