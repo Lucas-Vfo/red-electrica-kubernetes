@@ -1,20 +1,20 @@
 # =============================================================================
-# 05-rabbitmq.yaml  (namespace grupo4-qa)  —  Message Broker
-# Deployment (rabbitmq:3-management-alpine) + Service ClusterIP (amqp+panel).
-# PROD: cambiar namespace -> grupo4-prod.
+# 05-rabbitmq.yaml  (namespace grupo4-prod)  —  Message Broker
+# PVC + Deployment (rabbitmq:3-management-alpine) + Service (amqp + panel).
+#
 # -----------------------------------------------------------------------------
 # Verificar:
-#   kubectl get pods,svc -n grupo4-qa -l app=rabbitmq
-#   kubectl exec -n grupo4-qa deploy/rabbitmq -- rabbitmq-diagnostics -q ping
-#   kubectl exec -n grupo4-qa deploy/rabbitmq -- rabbitmqctl list_bindings
-#   kubectl port-forward -n grupo4-qa svc/rabbitmq 15672:15672  # panel web
+#   kubectl get pods,svc -n grupo4-prod -l app=rabbitmq
+#   kubectl exec -n grupo4-prod deploy/rabbitmq -- rabbitmq-diagnostics -q ping
+#   kubectl exec -n grupo4-prod deploy/rabbitmq -- rabbitmqctl list_bindings
+#   kubectl port-forward -n grupo4-prod svc/rabbitmq 15672:15672  # panel web
 # =============================================================================
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: rabbitmq-pvc
-  namespace: grupo4-qa
-  labels: { app: rabbitmq, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+  namespace: grupo4-prod
+  labels: { app: rabbitmq, app.kubernetes.io/part-of: smartgrid, entorno: prod }
 spec:
   accessModes: ["ReadWriteOnce"]
   storageClassName: local-path
@@ -26,16 +26,16 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: rabbitmq
-  namespace: grupo4-qa
+  namespace: grupo4-prod
   labels:
     app: rabbitmq
     app.kubernetes.io/part-of: smartgrid
     app.kubernetes.io/managed-by: grupo4
-    entorno: qa
+    entorno: prod
 spec:
   replicas: 1
   strategy:
-    type: Recreate                      
+    type: Recreate                    
   selector:
     matchLabels: { app: rabbitmq }
   template:
@@ -43,7 +43,7 @@ spec:
       labels:
         app: rabbitmq
         app.kubernetes.io/part-of: smartgrid
-        entorno: qa
+        entorno: prod
     spec:
       containers:
         - name: rabbitmq
@@ -79,8 +79,8 @@ apiVersion: v1
 kind: Service
 metadata:
   name: rabbitmq
-  namespace: grupo4-qa
-  labels: { app: rabbitmq, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+  namespace: grupo4-prod
+  labels: { app: rabbitmq, app.kubernetes.io/part-of: smartgrid, entorno: prod }
 spec:
   type: ClusterIP
   selector: { app: rabbitmq }

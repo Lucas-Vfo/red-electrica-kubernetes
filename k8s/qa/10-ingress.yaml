@@ -1,0 +1,36 @@
+# =============================================================================
+# 10-ingress.yaml  (namespace grupo4-qa)  —  Ingress Traefik
+# Acceso por NOMBRE DE DOMINIO.
+# Traefik es el Ingress Controller por defecto de K3s (puerto 80 del nodo).
+# Todo el tráfico de qa.grupo4.uta.cl entra al Service "frontend-gateway",
+# que sirve la web y reenvía /api/ al Servicio 1.
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get ingress -n grupo4-qa            # HOSTS = qa.grupo4.uta.cl
+#   curl -H "Host: qa.grupo4.uta.cl" http://146.83.102.23/health
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smartgrid-ingress
+  namespace: grupo4-qa
+  labels:
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: qa
+  annotations:
+    kubernetes.io/ingress.class: traefik
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: qa.grupo4.uta.cl
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-gateway
+                port:
+                  number: 80

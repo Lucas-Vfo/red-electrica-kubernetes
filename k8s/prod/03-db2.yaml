@@ -1,15 +1,19 @@
 # =============================================================================
-# 04-db3.yaml  (namespace grupo4-qa)  —  Base de datos del Servicio 3
-# AISLAMIENTO: sólo el Servicio 3 conoce el host "db3".
-# PROD: cambiar namespace -> grupo4-prod.
-# Verificar: kubectl exec -n grupo4-qa deploy/db3 -- pg_isready -U smartgrid -d facturacion
+# 03-db2.yaml  (namespace grupo4-prod)  —  Base de datos del Servicio 2
+# Capacidad de los transformadores por sector (el Servicio 2 descuenta kW).
+# Init: ConfigMap db2-init (copia de database/init-capacidad.sql).
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get pvc,pods,svc -n grupo4-prod -l app=db2
+#   kubectl exec -n grupo4-prod deploy/db2 -- psql -U smartgrid -d capacidad \
+#       -c "SELECT * FROM transformadores;"
 # =============================================================================
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: db3-pvc
-  namespace: grupo4-qa
-  labels: { app: db3, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+  name: db2-pvc
+  namespace: grupo4-prod
+  labels: { app: db2, app.kubernetes.io/part-of: smartgrid, entorno: prod }
 spec:
   accessModes: ["ReadWriteOnce"]
   storageClassName: local-path
@@ -20,25 +24,25 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: db3
-  namespace: grupo4-qa
+  name: db2
+  namespace: grupo4-prod
   labels:
-    app: db3
+    app: db2
     app.kubernetes.io/part-of: smartgrid
     app.kubernetes.io/managed-by: grupo4
-    entorno: qa
+    entorno: prod
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
-    matchLabels: { app: db3 }
+    matchLabels: { app: db2 }
   template:
     metadata:
       labels:
-        app: db3
+        app: db2
         app.kubernetes.io/part-of: smartgrid
-        entorno: qa
+        entorno: prod
     spec:
       containers:
         - name: postgres
@@ -51,7 +55,7 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
             - name: POSTGRES_DB
-              value: facturacion
+              value: capacidad
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           volumeMounts:
@@ -61,11 +65,11 @@ spec:
               mountPath: /docker-entrypoint-initdb.d
               readOnly: true
           readinessProbe:
-            exec: { command: ["sh","-c","pg_isready -U $POSTGRES_USER -d facturacion"] }
+            exec: { command: ["sh","-c","pg_isready -U $POSTGRES_USER -d capacidad"] }
             initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
-            exec: { command: ["sh","-c","pg_isready -U $POSTGRES_USER -d facturacion"] }
+            exec: { command: ["sh","-c","pg_isready -U $POSTGRES_USER -d capacidad"] }
             initialDelaySeconds: 30
             periodSeconds: 20
           resources:
@@ -74,20 +78,20 @@ spec:
       volumes:
         - name: datos
           persistentVolumeClaim:
-            claimName: db3-pvc
+            claimName: db2-pvc
         - name: init-sql
           configMap:
-            name: db3-init
+            name: db2-init
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: db3
-  namespace: grupo4-qa
-  labels: { app: db3, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+  name: db2
+  namespace: grupo4-prod
+  labels: { app: db2, app.kubernetes.io/part-of: smartgrid, entorno: prod }
 spec:
   type: ClusterIP
-  selector: { app: db3 }
+  selector: { app: db2 }
   ports:
     - port: 5432
       targetPort: 5432
