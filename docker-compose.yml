@@ -84,7 +84,7 @@ services:
 
   # -------------------- Servicio 3: Tarifador de Sesión ----------------------
   service3-manager:
-    build: ./service3-manager          
+    build: ./service3-manager   
     image: smartgrid-service3-manager:local
     container_name: sg-service3-manager
     environment:
@@ -124,8 +124,6 @@ services:
     restart: unless-stopped
 
   # ------------- Topología del broker (one-shot, espejo del Job k8s) ---------
-  # Declara exchange/colas/bindings vía management API y termina (exit 0).
-  # Así los microservicios quedan SIN código de administración del broker.
   rabbitmq-topology:
     image: curlimages/curl:8.10.1
     container_name: sg-rabbitmq-topology
@@ -134,7 +132,7 @@ services:
         condition: service_healthy
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-smartgrid}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-grupo4pass}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-smartgrid_local_2026}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
