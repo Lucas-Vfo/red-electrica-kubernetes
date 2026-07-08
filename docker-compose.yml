@@ -39,7 +39,7 @@ services:
     image: smartgrid-service1-api:local
     container_name: sg-service1-api
     ports:
-      - "3001:8000"                    # acceso directo para depurar (/docs, /healthz)
+      - "3001:8000"                    
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "5672"
@@ -53,6 +53,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      rabbitmq-topology:
+        condition: service_completed_successfully   
       db1:
         condition: service_healthy
     restart: unless-stopped
@@ -82,7 +84,7 @@ services:
 
   # -------------------- Servicio 3: Tarifador de Sesión ----------------------
   service3-manager:
-    build: ./service3-manager          # worker pika (sin puerto HTTP)
+    build: ./service3-manager          
     image: smartgrid-service3-manager:local
     container_name: sg-service3-manager
     environment:
@@ -120,6 +122,37 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     restart: unless-stopped
+
+  # ------------- Topología del broker (one-shot, espejo del Job k8s) ---------
+  # Declara exchange/colas/bindings vía management API y termina (exit 0).
+  # Así los microservicios quedan SIN código de administración del broker.
+  rabbitmq-topology:
+    image: curlimages/curl:8.10.1
+    container_name: sg-rabbitmq-topology
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-smartgrid}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-grupo4pass}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        API="http://rabbitmq:15672/api"
+        AUTH="$$RABBITMQ_DEFAULT_USER:$$RABBITMQ_DEFAULT_PASS"
+        echo "==> Declarando exchange smartgrid.exchange (topic, durable)"
+        curl -fsu "$$AUTH" -X PUT -H "content-type: application/json" \
+          -d '{"type":"topic","durable":true}' "$$API/exchanges/%2F/smartgrid.exchange" > /dev/null
+        for COLA in solicitud.creada carga.aprobada servicio.activo; do
+          echo "==> Declarando cola $$COLA y binding"
+          curl -fsu "$$AUTH" -X PUT -H "content-type: application/json" \
+            -d '{"durable":true}' "$$API/queues/%2F/$$COLA" > /dev/null
+          curl -fsu "$$AUTH" -X POST -H "content-type: application/json" \
+            -d "{\"routing_key\":\"$$COLA\"}" "$$API/bindings/%2F/e/smartgrid.exchange/q/$$COLA" > /dev/null
+        done
+        echo "==> Topología lista."
+    restart: "no"
 
   # ------------------------ Bases de datos aisladas --------------------------
   db1:

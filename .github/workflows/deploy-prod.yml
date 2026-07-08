@@ -93,6 +93,9 @@ jobs:
           kubectl -n grupo4-prod patch serviceaccount default \
             -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
 
+      - name: Renovar Job de topología de RabbitMQ (los Jobs completados no se re-ejecutan)
+        run: kubectl -n grupo4-prod delete job rabbitmq-topology --ignore-not-found
+
       - name: Aplicar manifiestos de PROD
         run: kubectl apply -f k8s/prod/
 

@@ -84,24 +84,28 @@ def save_service_state(event: dict, db_conn: Optional[object]) -> None:
         "id_domicilio": event["id_domicilio"],
         "tarifa_por_kw_clp": event["tarifa_por_kw_clp"],
         "estado_servicio": event["estado_servicio"],
-        "created_at": datetime.utcnow().replace(microsecond=0),
+        "timestamp_inicio": datetime.utcnow().replace(microsecond=0),
     }
     if not db_conn:
         logger.info("Simulando guardado en BD: %s", record)
         return
     try:
         with db_conn.cursor() as cursor:
+            # Tabla/columnas según database/init-tarifador.sql; ON CONFLICT evita
+            # duplicados si RabbitMQ re-entrega el mensaje.
             cursor.execute(
-                "INSERT INTO servicios_activos (id_solicitud, id_domicilio, tarifa_por_kw_clp, estado_servicio, created_at) VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO facturacion_servicios (id_solicitud, id_domicilio, tarifa_por_kw_clp, estado_servicio, timestamp_inicio)"
+                " VALUES (%s, %s, %s, %s, %s)"
+                " ON CONFLICT (id_solicitud) DO NOTHING",
                 (
                     record["id_solicitud"],
                     record["id_domicilio"],
                     record["tarifa_por_kw_clp"],
                     record["estado_servicio"],
-                    record["created_at"],
+                    record["timestamp_inicio"],
                 ),
             )
-            logger.info("Estado de servicio registrado en BD")
+            logger.info("Facturación registrada en BD")
     except Exception as exc:
         logger.warning("Error guardando estado en BD: %s", exc)
 
@@ -118,10 +122,30 @@ def publish_result(channel: pika.channel.Channel, event: dict) -> None:
     )
 
 
+def refresh_db_connection() -> None:
+    """Si la conexión a db3 murió (ej. reinicio del Pod de la BD en las pruebas
+    de resiliencia), intenta UNA reconexión rápida antes del próximo mensaje."""
+    global db_conn
+    if not (DB_HOST and DB_NAME and DB_USER and DB_PASS and psycopg2):
+        return
+    if db_conn is not None and not getattr(db_conn, "closed", 0):
+        return
+    try:
+        db_conn = psycopg2.connect(
+            host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS, connect_timeout=5
+        )
+        db_conn.autocommit = True
+        logger.info("Reconexión a PostgreSQL exitosa")
+    except Exception as exc:
+        db_conn = None
+        logger.warning("Reconexión a PostgreSQL fallida: %s", exc)
+
+
 def callback(ch: pika.channel.Channel, method, properties, body: bytes) -> None:
     try:
         payload = json.loads(body.decode("utf-8"))
         logger.info("Mensaje recibido de %s: %s", INPUT_QUEUE, payload)
+        refresh_db_connection()
         if payload.get("aprobado") is True:
             estado = "activo"
             tarifa = 150

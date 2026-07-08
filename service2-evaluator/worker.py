@@ -79,23 +79,37 @@ def connect_db() -> Optional[object]:
 
 
 def resolve_capacity(id_domicilio: int, potencia: float, db_conn: Optional[object]) -> tuple[bool, Optional[str]]:
-    capacity_threshold = 40.0
-    if db_conn:
+    """Evalúa contra la capacidad REAL del transformador del sector (db2) y,
+    si hay margen, la DESCUENTA en la misma sentencia (operación atómica).
+    Sector del domicilio: id_transformador = (id_domicilio % 3) + 1
+    (los 3 transformadores se siembran en database/init-capacidad.sql).
+    Sin BD disponible se evalúa con el umbral simulado de 40 kW (modo degradado)."""
+    if db_conn is not None:
+        id_transformador = (id_domicilio % 3) + 1
         try:
             with db_conn.cursor() as cursor:
                 cursor.execute(
-                    "SELECT capacidad_kw FROM transformadores WHERE id_domicilio = %s LIMIT 1",
-                    (id_domicilio,),
+                    "UPDATE transformadores"
+                    " SET capacidad_restante_kw = capacidad_restante_kw - %s"
+                    " WHERE id_transformador = %s AND capacidad_restante_kw >= %s"
+                    " RETURNING capacidad_restante_kw",
+                    (potencia, id_transformador, potencia),
                 )
                 row = cursor.fetchone()
-                if row and row[0] is not None:
-                    capacity_threshold = float(row[0])
-                    logger.info("Capacidad real encontrada para domicilio %d: %s kW", id_domicilio, capacity_threshold)
-                else:
-                    logger.info("No se encontró transformador para domicilio %d; usando valor simulado", id_domicilio)
+                if row is not None:
+                    logger.info(
+                        "Aprobado: transformador %d (domicilio %d) queda con %.2f kW",
+                        id_transformador, id_domicilio, float(row[0]),
+                    )
+                    return True, None
+                logger.info(
+                    "Rechazado: transformador %d sin margen para %.2f kW del domicilio %d",
+                    id_transformador, potencia, id_domicilio,
+                )
+                return False, "Saturación del transformador: la demanda supera la capacidad disponible"
         except Exception as exc:
             logger.warning("Error al consultar capacidad en la BD: %s; usando valor simulado", exc)
-    aprobado = potencia <= capacity_threshold
+    aprobado = potencia <= 40.0
     motivo_rechazo = None if aprobado else "Saturación del transformador: la demanda supera la capacidad disponible"
     return aprobado, motivo_rechazo
 
@@ -112,10 +126,30 @@ def publish_result(channel: pika.channel.Channel, event: dict) -> None:
     )
 
 
+def refresh_db_connection() -> None:
+    """Si la conexión a db2 murió (ej. reinicio del Pod de la BD en las pruebas
+    de resiliencia), intenta UNA reconexión rápida antes del próximo mensaje."""
+    global db_conn
+    if not (DB_HOST and DB_NAME and DB_USER and DB_PASS and psycopg2):
+        return
+    if db_conn is not None and not getattr(db_conn, "closed", 0):
+        return
+    try:
+        db_conn = psycopg2.connect(
+            host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS, connect_timeout=5
+        )
+        db_conn.autocommit = True
+        logger.info("Reconexión a PostgreSQL exitosa")
+    except Exception as exc:
+        db_conn = None
+        logger.warning("Reconexión a PostgreSQL fallida: %s", exc)
+
+
 def callback(ch: pika.channel.Channel, method, properties, body: bytes) -> None:
     try:
         payload = json.loads(body.decode("utf-8"))
         logger.info("Mensaje recibido de %s: %s", INPUT_QUEUE, payload)
+        refresh_db_connection()
         aprobado, motivo = resolve_capacity(
             int(payload["id_domicilio"]),
             float(payload["potencia_solicitada_kw"]),
