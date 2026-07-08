@@ -1,0 +1,60 @@
+# =============================================================================
+# 08-service3-manager.yaml  (namespace grupo4-prod)  —  Servicio 3: Tarifador de Sesión
+# Worker pika PURO: consume `carga.aprobada`, registra la facturación en db3 y
+# publica `servicio.activo`. Sin Service ni probes TCP (no abre puertos).
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get pods -n grupo4-prod -l app=service3-manager
+#   kubectl logs -n grupo4-prod deploy/service3-manager -f
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service3-manager
+  namespace: grupo4-prod
+  labels:
+    app: service3-manager
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: service3-manager }
+  template:
+    metadata:
+      labels:
+        app: service3-manager
+        app.kubernetes.io/part-of: smartgrid
+        entorno: prod
+    spec:
+      containers:
+        - name: service3-manager
+          image: ghcr.io/lucas-vfo/smartgrid-service3-manager:prod
+          imagePullPolicy: Always
+          env:
+            - { name: DB_HOST, value: "db3" }
+            - { name: DB_NAME, value: "facturacion" }
+            - name: DB_PORT
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: DB_PORT } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_USER } }
+            - name: DB_PASS
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
+            - name: RABBITMQ_HOST
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_HOST } }
+            - name: RABBITMQ_PORT
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_PORT } }
+            - name: RABBITMQ_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_USER } }
+            - name: RABBITMQ_PASS
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_PASS } }
+            - name: TARIFA_POR_KW_CLP
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: TARIFA_POR_KW_CLP } }
+          livenessProbe:
+            exec: { command: ["sh","-c","pgrep -f worker.py"] }
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits:   { cpu: 200m, memory: 128Mi }

@@ -1,36 +1,37 @@
 # =============================================================================
-# 01-config.yaml  (namespace grupo4-qa)
-# Secret con credenciales + ConfigMap con parámetros no sensibles.
+# 01-config.yaml  (namespace grupo4-prod)
+# Secret (credenciales) + ConfigMap (parámetros) + ConfigMaps con los scripts
+# SQL de inicialización que Postgres ejecuta en /docker-entrypoint-initdb.d.
+#
 # -----------------------------------------------------------------------------
 # Verificar:
-#   kubectl get secret,configmap -n grupo4-qa
-#   kubectl describe secret smartgrid-secrets -n grupo4-qa
+#   kubectl get secret,configmap -n grupo4-prod
 # =============================================================================
 apiVersion: v1
 kind: Secret
 metadata:
   name: smartgrid-secrets
-  namespace: grupo4-qa
+  namespace: grupo4-prod
   labels:
     app.kubernetes.io/part-of: smartgrid
     app.kubernetes.io/managed-by: grupo4
-    entorno: qa
+    entorno: prod
 type: Opaque
 stringData:
   POSTGRES_USER: smartgrid
-  POSTGRES_PASSWORD: "alumnosdic1"
+  POSTGRES_PASSWORD: "alumnosdic2"    
   RABBITMQ_DEFAULT_USER: smartgrid
-  RABBITMQ_DEFAULT_PASS: "alumnosdic1"
+  RABBITMQ_DEFAULT_PASS: "alumnosdic2"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: smartgrid-config
-  namespace: grupo4-qa
+  namespace: grupo4-prod
   labels:
     app.kubernetes.io/part-of: smartgrid
     app.kubernetes.io/managed-by: grupo4
-    entorno: qa
+    entorno: prod
 data:
   # Hosts internos (nombres de los Services ClusterIP) y parámetros comunes.
   RABBITMQ_HOST: "rabbitmq"
@@ -43,8 +44,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: db1-init
-  namespace: grupo4-qa
-  labels: { app: db1, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+  namespace: grupo4-prod
+  labels: { app: db1, app.kubernetes.io/part-of: smartgrid, entorno: prod }
 data:
   init-solicitud.sql: |
     CREATE TABLE IF NOT EXISTS solicitudes (
@@ -60,8 +61,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: db2-init
-  namespace: grupo4-qa
-  labels: { app: db2, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+  namespace: grupo4-prod
+  labels: { app: db2, app.kubernetes.io/part-of: smartgrid, entorno: prod }
 data:
   init-capacidad.sql: |
     CREATE TABLE IF NOT EXISTS transformadores (
@@ -80,8 +81,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: db3-init
-  namespace: grupo4-qa
-  labels: { app: db3, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+  namespace: grupo4-prod
+  labels: { app: db3, app.kubernetes.io/part-of: smartgrid, entorno: prod }
 data:
   init-tarifador.sql: |
     CREATE TABLE IF NOT EXISTS facturacion_servicios (
