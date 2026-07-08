@@ -1,0 +1,83 @@
+# =============================================================================
+# ci.yml  —  Validación de Pull Requests
+# Disparo: cada PR hacia develop o main.
+#
+# Es el "status check" que exige la protección de ramas: un PR no se puede
+# mezclar si rompe un manifiesto, la sintaxis Python/JSON o el build Docker.
+# En el Branch Ruleset se debe exigir el check llamado:  validar-pr
+# =============================================================================
+name: CI (validar PR)
+
+on:
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch: {}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) Lint de manifiestos K8s, workflows, compose, JSON y sintaxis Python
+  # ---------------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Validar sintaxis YAML (k8s + workflows + compose)
+        run: |
+          python3 - <<'EOF'
+          import glob, sys, yaml
+          archivos = (glob.glob("k8s/**/*.yaml", recursive=True)
+                      + glob.glob(".github/workflows/*.yml")
+                      + ["docker-compose.yml"])
+          errores = 0
+          for ruta in sorted(archivos):
+              try:
+                  with open(ruta, encoding="utf-8") as f:
+                      docs = list(yaml.safe_load_all(f))
+                  print(f"OK   {ruta} ({len(docs)} documento(s))")
+              except Exception as exc:
+                  print(f"FAIL {ruta}: {exc}")
+                  errores += 1
+          sys.exit(1 if errores else 0)
+          EOF
+
+      - name: Validar JSON (contratos de mensajería)
+        run: python3 -m json.tool messaging/definitions.json > /dev/null && echo "OK definitions.json"
+
+      - name: Validar sintaxis Python (los 3 servicios)
+        run: |
+          python3 -m py_compile service1-api/main.py service2-evaluator/worker.py service3-manager/worker.py
+          echo "OK sintaxis Python"
+
+  # ---------------------------------------------------------------------------
+  # 2) Build de las 4 imágenes SIN publicar (verifica Dockerfiles y contextos)
+  # ---------------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: [service1-api, service2-evaluator, service3-manager, frontend-gateway]
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Preparar Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build sin push (${{ matrix.component }})
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.component }}
+          push: false
+          tags: smartgrid-${{ matrix.component }}:pr
+
+  # ---------------------------------------------------------------------------
+  # 3) Check único que exige la protección de ramas (agrega lint + builds)
+  # ---------------------------------------------------------------------------
+  validar-pr:
+    needs: [lint, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: PR válido
+        run: echo "Lint y builds OK — el PR puede mezclarse."
