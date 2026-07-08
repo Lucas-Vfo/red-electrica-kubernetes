@@ -1,26 +1,30 @@
 # =============================================================================
-# deploy-qa.yml  —  CI/CD del entorno QA  (Semana 4)
+# deploy-qa.yml  —  CI/CD del entorno QA
 # Disparo: cada push a la rama "develop".
 # Flujo:  checkout -> docker build (Alpine) -> push a GHCR -> kubectl apply
-#         -> set image -> rollout status   (CERO despliegue manual).
+#         -> set image (tag = SHA) -> rollout status   (CERO despliegue manual).
 # Destino: namespace grupo4-qa  /  dominio qa.grupo4.uta.cl
 #
 # Secrets requeridos en GitHub (Settings > Secrets and variables > Actions):
-#   DOCKER_USERNAME  -> usuario de GitHub (para login en ghcr.io)
-#   DOCKER_PASSWORD  -> Personal Access Token con permiso write:packages
-#   KUBECONFIG       -> kubeconfig de la VM en base64  (cat ~/.kube/config | base64 -w0)
+#   KUBECONFIG       -> kubeconfig de la VM en base64  (base64 -w0 ~/.kube/config)
 #   SERVER_IP        -> 146.83.102.23  (IP pública del API server del clúster)
+#   DOCKER_USERNAME  -> usuario de GitHub (para el imagePullSecret de ghcr.io)
+#   DOCKER_PASSWORD  -> Personal Access Token con permiso read:packages
 # =============================================================================
 name: Deploy QA
 
 on:
   push:
     branches: [develop]
-  workflow_dispatch: {}        # permite ejecutarlo a mano desde la pestaña Actions
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-qa
+  cancel-in-progress: true
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1) Construir y publicar las 5 imágenes de aplicación en GHCR
+  # 1) Construir y publicar las 4 imágenes de aplicación en GHCR
   # ---------------------------------------------------------------------------
   build-and-push:
     runs-on: ubuntu-latest
@@ -29,7 +33,7 @@ jobs:
       packages: write          # necesario para empujar a ghcr.io
     strategy:
       matrix:
-        component: [frontend, gateway, servicio1, servicio2, servicio3]
+        component: [service1-api, service2-evaluator, service3-manager, frontend-gateway]
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
@@ -38,12 +42,12 @@ jobs:
         id: vars
         run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
-      - name: Login en GHCR
+      - name: Login en GHCR (usa el token integrado, no requiere secrets)
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Preparar Buildx
         uses: docker/setup-buildx-action@v3
@@ -51,7 +55,7 @@ jobs:
       - name: Build & Push  (${{ matrix.component }})
         uses: docker/build-push-action@v6
         with:
-          context: ./${{ matrix.component }}    # carpeta con el Dockerfile (Rol 3 / Rol 4)
+          context: ./${{ matrix.component }}    # carpeta real con el Dockerfile
           push: true
           tags: |
             ghcr.io/${{ steps.vars.outputs.owner }}/smartgrid-${{ matrix.component }}:qa
@@ -63,7 +67,7 @@ jobs:
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
-    environment: qa            # usa los secrets del Environment "qa" (VM/clúster de QA)
+    environment: qa            # usa los secrets del Environment "qa" si existen
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
@@ -86,9 +90,9 @@ jobs:
         run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Crear namespaces y topes de recursos
-        run: kubectl apply -f k8s/00-namespaces.yaml
+        run: kubectl apply -f k8s/namespaces.yaml
 
-      - name: Asegurar pull secret de GHCR (paquetes privados)
+      - name: Asegurar pull secret de GHCR (por si los paquetes son privados)
         run: |
           kubectl -n grupo4-qa create secret docker-registry ghcr-pull \
             --docker-server=ghcr.io \
@@ -104,15 +108,14 @@ jobs:
       - name: Forzar rollout a la imagen recién construida (tag = SHA)
         run: |
           P=ghcr.io/${{ steps.vars.outputs.owner }}/smartgrid
-          kubectl -n grupo4-qa set image deployment/frontend  frontend=$P-frontend:${{ github.sha }}
-          kubectl -n grupo4-qa set image deployment/gateway   gateway=$P-gateway:${{ github.sha }}
-          kubectl -n grupo4-qa set image deployment/servicio1 servicio1=$P-servicio1:${{ github.sha }}
-          kubectl -n grupo4-qa set image deployment/servicio2 servicio2=$P-servicio2:${{ github.sha }}
-          kubectl -n grupo4-qa set image deployment/servicio3 servicio3=$P-servicio3:${{ github.sha }}
+          kubectl -n grupo4-qa set image deployment/service1-api      service1-api=$P-service1-api:${{ github.sha }}
+          kubectl -n grupo4-qa set image deployment/service2-evaluator service2-evaluator=$P-service2-evaluator:${{ github.sha }}
+          kubectl -n grupo4-qa set image deployment/service3-manager  service3-manager=$P-service3-manager:${{ github.sha }}
+          kubectl -n grupo4-qa set image deployment/frontend-gateway  frontend-gateway=$P-frontend-gateway:${{ github.sha }}
 
       - name: Esperar a que todo quede disponible
         run: |
-          for d in db1 db2 db3 rabbitmq servicio1 servicio2 servicio3 frontend gateway; do
+          for d in db1 db2 db3 rabbitmq service1-api service2-evaluator service3-manager frontend-gateway; do
             kubectl -n grupo4-qa rollout status deployment/$d --timeout=180s
           done
-          kubectl get pods,svc,ingress -n grupo4-qa
+          kubectl get pods,svc,ingress,cronjob -n grupo4-qa
