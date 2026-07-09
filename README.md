@@ -169,10 +169,77 @@ Especificación exacta de los mensajes JSON que viajan por cada cola de RabbitMQ
 ---
 
 ## 3. Guía de Configuración de Acceso
+El sistema NO se accede por `IP:puerto`, sino por **nombre de dominio** a través del Ingress.
+
+## 3.1 Acceso al clúster con `kubectl`
+
+```bash
+# En la VM (una vez): copiar el kubeconfig de K3s
+sudo cat /etc/rancher/k3s/k3s.yaml
+# Pegarlo en tu PC como ~/.kube/config-grupo4 y cambiar:
+#   server: https://127.0.0.1:6443  ->  https://146.83.102.23:6443
+export KUBECONFIG=~/.kube/config-grupo4       # Linux/macOS
+# En Windows PowerShell:  $env:KUBECONFIG="$HOME\.kube\config-grupo4"
+kubectl get nodes
+```
+
+### 3.2 Acceso al sistema por dominio
+
+El tráfico entra por el Ingress de Traefik, que enruta según el header `Host`. Como el dominio `qa.grupo4.uta.cl` no tiene registro DNS público, se resuelve con una línea en el archivo `hosts` del equipo que abre el navegador:
+
+| Sistema | Archivo `hosts` | Línea a agregar |
+|---|---|---|
+| Windows | `C:\Windows\System32\drivers\etc\hosts` | `146.83.102.23   qa.grupo4.uta.cl` |
+| Linux/macOS | `/etc/hosts` | `146.83.102.23   qa.grupo4.uta.cl` |
+
+> En Windows hay que editar el archivo **como administrador**. La forma más simple es PowerShell (como admin):
+> ```powershell
+> Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "146.83.102.23`tqa.grupo4.uta.cl"
+> ```
+
+Comprobar el acceso:
+
+```bash
+curl http://qa.grupo4.uta.cl/health          # -> "frontend-gateway ok"
+curl http://qa.grupo4.uta.cl/api/healthz      # -> {"status":"ok","db":true,"rabbitmq":true}
+# Prueba sin tocar /etc/hosts (pasando el Host a mano):
+curl -H "Host: qa.grupo4.uta.cl" http://146.83.102.23/health
+```
+
+Una vez resuelto el nombre, abrir `http://qa.grupo4.uta.cl` en el navegador muestra el frontend. (PROD será idéntico con `prod.grupo4.uta.cl` → nodo de producción.)
+
+---
 
 ## 4. Manual Operativo de Control
+Todos los comandos asumen `kubectl` configurado (§3.1) o `sudo k3s kubectl` desde la VM. Reemplazar `grupo4-qa` por `grupo4-prod` según el entorno.
 
-## 5. Roles del Equipo
+### 4.1 Estado general
+
+```bash
+kubectl -n grupo4-qa get pods -o wide          # todos los Pods, con IP y nodo
+kubectl -n grupo4-qa get svc,ingress,cronjob   # servicios, ingress y respaldos
+kubectl -n grupo4-qa describe resourcequota    # consumo vs. tope del namespace
+```
+
+Todo sano = 8 Deployments en `Running 1/1` (db1, db2, db3, rabbitmq, service1-api, service2-evaluator, service3-manager, frontend-gateway) + el Job `rabbitmq-topology` en `Completed`.
+
+## 5. CI/CD y Modelo de Ramas
+
+**Cero despliegues manuales**: nadie entra por consola al servidor para
+desplegar. GitHub Actions construye las imágenes Alpine, las publica en GHCR
+(registro público) y aplica los manifiestos en el clúster.
+
+| Rama | Evento | Workflow | Destino |
+|------|--------|----------|---------|
+| `dev-<nombre>` (4 ramas personales) | push | — | — |
+| PR → `develop` / `main` | pull_request | `ci.yml` (check **`validar-pr`**: lint YAML/JSON/Python + build sin push) | — |
+| `develop` | push (merge del PR) | `deploy-qa.yml` | namespace `grupo4-qa` → `qa.grupo4.uta.cl` |
+| `main` | push (merge del PR) | `deploy-prod.yml` | namespace `grupo4-prod` → `prod.grupo4.uta.cl` |
+
+`main` y `develop` están protegidas por un Branch Ruleset: solo se entra por
+**PR aprobado + check `validar-pr` en verde**. 
+
+## 6. Roles del Equipo
 
 | Rol | Integrante | Responsabilidad | Stack técnico |
 |-----|-----------|----------------|---------------|
@@ -183,19 +250,15 @@ Especificación exacta de los mensajes JSON que viajan por cada cola de RabbitMQ
 
 ---
 
-## 6. Estado de Avance
+## 7. Estado de Avance
 
 | Semana | Período | Objetivo | Estado |
 |--------|---------|----------|--------|
 | **Semana 1** | Jun 15 – 19 | Planificación de contratos y acuerdos de grupo | ✅ Completado |
-| **Semana 2** | Jun 22 – 26 | Construcción de servicios Alpine + Hito 1 (Formato Cliente) | 🔄 En progreso |
-| **Semana 3** | Jun 29 – Jul 03 | Integración K3s + conexión RabbitMQ en clúster | ⏳ Pendiente |
-| **Semana 4** | Jul 06 – 10 | CI/CD completo + Hito 2 (Formato Técnico) | ⏳ Pendiente |
-| **Semana 5** | Jul 13 – 17 | Alta disponibilidad, backups, Defensa Final (Jul 17) | ⏳ Pendiente |
+| **Semana 2** | Jun 22 – 26 | Construcción de servicios Alpine + Hito 1 (Formato Cliente) | ✅ Completado |
+| **Semana 3** | Jun 29 – Jul 03 | Integración K3s + conexión RabbitMQ en clúster | ✅ Completado |
+| **Semana 4** | Jul 06 – 10 | CI/CD completo + Hito 2 (Formato Técnico) | ✅ Completado |
+| **Semana 5** | Jul 13 – 17 | Alta disponibilidad, backups, Defensa Final (Jul 17) | 🔄 En progreso |
 
 
 *Proyecto Final — Taller de Integración / Infraestructura — Universidad de Tarapacá — Julio 2026*
-
-
-
-
