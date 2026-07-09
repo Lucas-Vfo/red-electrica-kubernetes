@@ -139,6 +139,12 @@ services:
         set -eu
         API="http://rabbitmq:15672/api"
         AUTH="$$RABBITMQ_DEFAULT_USER:$$RABBITMQ_DEFAULT_PASS"
+        echo "==> Esperando que la API de management esté lista..."
+        for i in $(seq 1 30); do
+          curl -fsu "$$AUTH" "$$API/overview" > /dev/null 2>&1 && break
+          echo "    intento $$i/30 — reintentando en 2s..."
+          sleep 2
+        done
         echo "==> Declarando exchange smartgrid.exchange (topic, durable)"
         curl -fsu "$$AUTH" -X PUT -H "content-type: application/json" \
           -d '{"type":"topic","durable":true}' "$$API/exchanges/%2F/smartgrid.exchange" > /dev/null
