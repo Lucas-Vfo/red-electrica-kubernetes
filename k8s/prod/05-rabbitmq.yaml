@@ -61,12 +61,16 @@ spec:
               mountPath: /var/lib/rabbitmq
           readinessProbe:
             exec: { command: ["rabbitmq-diagnostics","-q","ping"] }
-            initialDelaySeconds: 15
-            periodSeconds: 15
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 15        # el ping de Erlang es lento en CPU limitada
+            failureThreshold: 6
           livenessProbe:
             exec: { command: ["rabbitmq-diagnostics","-q","ping"] }
-            initialDelaySeconds: 40
+            initialDelaySeconds: 90    # RabbitMQ tarda ~40s en bootear; damos aire
             periodSeconds: 30
+            timeoutSeconds: 15        # sin esto usa 1s por defecto y mata un pod sano
+            failureThreshold: 6
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits:   { cpu: 500m, memory: 512Mi }
