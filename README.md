@@ -1,16 +1,17 @@
 # Smart Grid — Gestor de Red Eléctrica Inteligente
 
 > Sistema de microservicios asincrónicos para la gestión de demanda eléctrica residencial en tiempo real.
-> Desplegado en Kubernetes/K3s con CI/CD automatizado mediante GitHub Actions.
+> Desplegado en Kubernetes/K3s con CI/CD automatizado mediante GitHub Actions (cero despliegues manuales).
 
-![Estado](https://img.shields.io/badge/Semana-2%20%E2%80%94%20En%20desarrollo-blue)
-![Hito](https://img.shields.io/badge/Hito%201-Formato%20Cliente%20%E2%9C%94-green)
+![Estado](https://img.shields.io/badge/Semana-5%20%E2%80%94%20Defensa%20Final-blue)
+![Hito](https://img.shields.io/badge/Hito%202-Formato%20T%C3%A9cnico%20%E2%9C%94-green)
 ![Entorno](https://img.shields.io/badge/Entorno-QA%20%7C%20PROD-purple)
+
 ---
 
 ## Tabla de Contenidos
 
-1. [Diagrama Arquitectura](#1-diagrama-arquitectura)
+1. [Diagrama Arquitectónico](#1-diagrama-arquitectónico)
 2. [Contrato de Datos](#2-contrato-de-datos)
 3. [Guía de Configuración de Acceso](#3-guía-de-configuración-de-acceso)
 4. [Manual Operativo de Control](#4-manual-operativo-de-control)
