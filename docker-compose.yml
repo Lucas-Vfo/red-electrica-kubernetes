@@ -38,8 +38,8 @@ services:
     build: ./service1-api              # FastAPI + gunicorn (python:3.11-alpine)
     image: smartgrid-service1-api:local
     container_name: sg-service1-api
-    ports:
-      - "3001:8000"                    
+    # ports:
+    #   - "3001:8000"
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "5672"
