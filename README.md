@@ -188,14 +188,17 @@ kubectl get nodes
 
 El tráfico entra por el Ingress de Traefik, que enruta según el header `Host`. Como el dominio `qa.grupo4.uta.cl` no tiene registro DNS público, se resuelve con una línea en el archivo `hosts` del equipo que abre el navegador:
 
-| Sistema | Archivo `hosts` | Línea a agregar |
+| Sistema | Archivo `hosts` | Líneas a agregar |
 |---|---|---|
-| Windows | `C:\Windows\System32\drivers\etc\hosts` | `146.83.102.23   qa.grupo4.uta.cl` |
-| Linux/macOS | `/etc/hosts` | `146.83.102.23   qa.grupo4.uta.cl` |
+| Windows | `C:\Windows\System32\drivers\etc\hosts` | `146.83.102.23   qa.grupo4.uta.cl` <br> `146.83.102.33   prod.grupo4.uta.cl` |
+| Linux/macOS | `/etc/hosts` | `146.83.102.23   qa.grupo4.uta.cl` <br> `146.83.102.33   prod.grupo4.uta.cl` |
+
+> Traefik escucha en el puerto 80 de **todos** los nodos, por lo que cada dominio puede apuntar a cualquiera de las dos IPs; se usa una IP por entorno para repartir el tráfico.
 
 > En Windows hay que editar el archivo **como administrador**. La forma más simple es PowerShell (como admin):
 > ```powershell
 > Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "146.83.102.23`tqa.grupo4.uta.cl"
+> Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "146.83.102.33`tprod.grupo4.uta.cl"
 > ```
 
 Comprobar el acceso:
@@ -207,7 +210,7 @@ curl http://qa.grupo4.uta.cl/api/healthz      # -> {"status":"ok","db":true,"rab
 curl -H "Host: qa.grupo4.uta.cl" http://146.83.102.23/health
 ```
 
-Una vez resuelto el nombre, abrir `http://qa.grupo4.uta.cl` en el navegador muestra el frontend. (PROD será idéntico con `prod.grupo4.uta.cl` → nodo de producción.)
+Una vez resuelto el nombre, abrir `http://qa.grupo4.uta.cl` (o `http://prod.grupo4.uta.cl`) en el navegador muestra el frontend. **Nunca se usa `IP:puerto`**.
 
 ---
 
@@ -223,6 +226,77 @@ kubectl -n grupo4-qa describe resourcequota    # consumo vs. tope del namespace
 ```
 
 Todo sano = 8 Deployments en `Running 1/1` (db1, db2, db3, rabbitmq, service1-api, service2-evaluator, service3-manager, frontend-gateway) + el Job `rabbitmq-topology` en `Completed`.
+
+### 4.2 Historial centralizado (logs unificados)
+
+Todos los Pods del sistema llevan la etiqueta común `app.kubernetes.io/part-of: smartgrid`, lo que permite **una única vista unificada de las trazas de todos los contenedores** — sin revisar máquina por máquina:
+
+```bash
+# UNA sola salida con los logs de TODO el ecosistema, cada línea con su pod como prefijo
+kubectl -n grupo4-qa logs -f --prefix --timestamps \
+  -l app.kubernetes.io/part-of=smartgrid \
+  --all-containers --max-log-requests 12 --tail=20
+```
+
+```bash
+# Seguir una solicitud puntual a través de los 3 servicios (correlación por id):
+kubectl -n grupo4-qa logs --prefix -l app.kubernetes.io/part-of=smartgrid \
+  --all-containers --max-log-requests 12 --tail=500 | grep "REQ-2026-001"
+
+# Solo la cadena de negocio (los 3 servicios), últimos 10 minutos:
+kubectl -n grupo4-qa logs --prefix -l app.kubernetes.io/part-of=smartgrid \
+  --all-containers --max-log-requests 12 --since=10m
+```
+
+Con esa vista se observa el ciclo completo de un evento: `service1-api` publica `solicitud.creada` → `service2-evaluator` evalúa y publica `carga.aprobada` → `service3-manager` factura y publica `servicio.activo` → `service1-api` actualiza el historial.
+
+### 4.3 Respaldos automáticos cada 10 minutos (certificación)
+
+El CronJob `backup-postgres` (`k8s/*/11-backup-cronjob.yaml`) corre **cada 10 minutos**: hace `pg_dump --clean --if-exists` de las **tres** bases de datos y lo guarda comprimido en el PVC `backups-pvc` (independiente de la vida de cualquier contenedor). Retención: últimos 12 respaldos (~2 h).
+
+```bash
+# 1) El CronJob existe y está programado cada 10 min
+kubectl -n grupo4-qa get cronjob backup-postgres     # SCHEDULE = */10 * * * *
+
+# 2) Corridas recientes y su resultado
+kubectl -n grupo4-qa get jobs --sort-by=.metadata.creationTimestamp | tail -5
+
+# 3) Certificar el contenido persistido: el log de cada corrida termina con el
+#    inventario del PVC (directorios con timestamp + tamaño total)
+kubectl -n grupo4-qa logs "$(kubectl -n grupo4-qa get pods -l app=backup-postgres \
+  --sort-by=.metadata.creationTimestamp -o name | tail -1)"
+
+# 4) Forzar un respaldo AHORA (útil en la defensa, no espera los 10 min)
+kubectl -n grupo4-qa create job backup-manual --from=cronjob/backup-postgres
+kubectl -n grupo4-qa logs -f job/backup-manual
+```
+
+### 4.4 Restauración desde respaldo
+
+Job manual de emergencia (`k8s/restore/`). Usa por defecto el **último respaldo completo** (puntero `ULTIMO` del PVC); para uno específico, editar la variable `SNAPSHOT` del manifiesto:
+
+```bash
+kubectl -n grupo4-qa delete job restore-postgres --ignore-not-found
+kubectl apply -f k8s/restore/restore-qa.yaml         # PROD: restore-prod.yaml
+kubectl -n grupo4-qa logs -f job/restore-postgres    # espera a cada BD y la restaura
+```
+
+### 4.5 Pruebas de resiliencia (guion de la defensa)
+
+```bash
+# A) Matar una base de datos → el Deployment la recrea y los DATOS SIGUEN AHÍ (PVC)
+kubectl -n grupo4-qa delete pod -l app=db2
+kubectl -n grupo4-qa wait --for=condition=ready pod -l app=db2 --timeout=120s
+kubectl -n grupo4-qa exec deploy/db2 -- psql -U smartgrid -d capacidad \
+  -c "SELECT * FROM transformadores;"
+
+# B) Pérdida de datos real (borran tablas) → restaurar con el respaldo (§4.4)
+
+# C) Caída de un nodo → K3s reprograma los Pods en el nodo vivo
+#    (procedimiento completo en PROD-puesta-en-marcha.md, sección D.4)
+sudo systemctl stop k3s-agent            # en el nodo .33
+kubectl get nodes && kubectl -n grupo4-prod get pods -o wide -w
+```
 
 ## 5. CI/CD y Modelo de Ramas
 
@@ -261,14 +335,28 @@ desplegar. GitHub Actions construye las imágenes Alpine, las publica en GHCR
 ├── messaging/             definitions.json (topología del broker, referencia)
 ├── k8s/
 │   ├── namespaces.yaml    grupo4-qa y grupo4-prod + LimitRange + ResourceQuota
-│   ├── qa/                ecosistema QA completo (01…11, incluye backups)
+│   ├── qa/                ecosistema QA completo (01…12, incluye backup CronJob)
 │   ├── prod/              espejo PROD (dominio/tag/claves propios)
-│   └── restore/           Job de restauración desde backups-pvc
+│   └── restore/           Jobs de restauración desde backups-pvc (QA y PROD)
 ├── docker-compose.yml     espejo local del clúster para desarrollo
-└── docs/                  guías del Rol 1 (CI/CD, operación, correcciones)
+└── PROD-puesta-en-marcha.md   guía Rol 1: unión del nodo .33 y activación de PROD
 ```
 
-## 8. Estado de Avance
+## 8. Ejecución Local (docker compose)
+
+Espejo local del clúster para desarrollo, con los mismos contenedores, colas y bases de datos:
+
+```bash
+cp .env.example .env        # credenciales locales (no se versionan)
+docker compose up --build   # levanta las 3 BDs, RabbitMQ, los 3 servicios y el gateway
+# Frontend:  http://localhost:8080     ·  API: http://localhost:8080/api/healthz
+# RabbitMQ Management: http://localhost:15672
+docker compose down         # detener (agregar -v para borrar también los datos)
+```
+
+`test_backend.py` permite probar el flujo completo publicando una solicitud de ejemplo.
+
+## 9. Estado de Avance
 
 | Semana | Período | Objetivo | Estado |
 |--------|---------|----------|--------|
@@ -276,7 +364,7 @@ desplegar. GitHub Actions construye las imágenes Alpine, las publica en GHCR
 | **Semana 2** | Jun 22 – 26 | Servicios Alpine + Hito 1 (Formato Cliente) | ✅ Completado |
 | **Semana 3** | Jun 29 – Jul 03 | Integración K3s + conexión RabbitMQ en clúster | ✅ Completado |
 | **Semana 4** | Jul 06 – 10 | CI/CD completo + Hito 2 (Formato Técnico) | ✅ Completado |
-| **Semana 5** | Jul 13 – 17 | Dominios, backups cada 10 min, logs unificados, Defensa Final (Jul 17) | 🔄 Listo para defensa |
+| **Semana 5** | Jul 13 – 17 | Dominios, backups cada 10 min, logs unificados, Defensa Final (Jul 17) | ✅ Completado — listo para defensa |
 
 ---
 

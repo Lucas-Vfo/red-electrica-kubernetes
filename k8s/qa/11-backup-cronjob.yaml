@@ -1,0 +1,119 @@
+# =============================================================================
+# 11-backup-cronjob.yaml  (namespace grupo4-qa)  —  Respaldos automáticos
+#
+# Requisito del proyecto: "rutina automática integrada en el clúster que
+# realice copias de seguridad internas cada 10 minutos".
+#
+# PVC "backups-pvc" (persistente, sobrevive a los Pods) + CronJob
+# "backup-postgres" que cada 10 min hace pg_dump de las TRES bases de datos
+# (db1/solicitudes, db2/capacidad, db3/facturacion) y lo comprime en un
+# directorio con timestamp UTC. Conserva los últimos 12 respaldos (~2 horas).
+#
+# El dump usa --clean --if-exists, por lo que restaurarlo es un simple
+# psql -f (ver k8s/restore/).
+#
+# NOTA (local-path, RWO): el PV queda fijado al nodo donde corre el primer
+# Pod que lo usa; las corridas siguientes se programan solas en ese nodo.
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl -n grupo4-qa get cronjob backup-postgres        # SCHEDULE */10
+#   kubectl -n grupo4-qa get jobs --sort-by=.metadata.creationTimestamp
+#   kubectl -n grupo4-qa logs job/<backup-postgres-XXXXXXXX>  # inventario al final
+# Forzar un respaldo inmediato (para la defensa):
+#   kubectl -n grupo4-qa create job backup-manual --from=cronjob/backup-postgres
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backups-pvc
+  namespace: grupo4-qa
+  labels: { app: backup-postgres, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path          # StorageClass por defecto de K3s
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-postgres
+  namespace: grupo4-qa
+  labels:
+    app: backup-postgres
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: qa
+spec:
+  schedule: "*/10 * * * *"              # cada 10 minutos (hora UTC del clúster)
+  concurrencyPolicy: Forbid             # nunca dos respaldos a la vez
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app: backup-postgres
+            app.kubernetes.io/part-of: smartgrid
+            entorno: qa
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: postgres:15-alpine          # misma versión que las BDs (pg_dump compatible)
+              env:
+                - name: POSTGRES_USER
+                  valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_USER } }
+                - name: PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
+                - name: RETENCION            # cuántos respaldos conservar
+                  value: "12"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -u
+                  TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+                  DIR=/backups/$TS
+                  mkdir -p "$DIR"
+                  OK=1
+                  for PAR in "db1 solicitudes" "db2 capacidad" "db3 facturacion"; do
+                    set -- $PAR; HOST=$1; DB=$2
+                    echo "[backup] $HOST/$DB -> $DIR/$HOST-$DB.sql.gz"
+                    if pg_dump -h "$HOST" -U "$POSTGRES_USER" -d "$DB" --clean --if-exists -f "$DIR/$HOST-$DB.sql"; then
+                      gzip -f "$DIR/$HOST-$DB.sql"
+                    else
+                      echo "[backup] ERROR: fallo el dump de $HOST/$DB"
+                      OK=0
+                    fi
+                  done
+                  # Puntero al último respaldo completo (lo usa el Job de restore)
+                  [ "$OK" = "1" ] && echo "$TS" > /backups/ULTIMO
+                  # Retención: conservar solo los últimos $RETENCION directorios
+                  N=$(ls -1d /backups/20* 2>/dev/null | wc -l)
+                  if [ "$N" -gt "$RETENCION" ]; then
+                    ls -1d /backups/20* | sort | head -n $((N - RETENCION)) | while read -r D; do
+                      echo "[backup] retencion: eliminando $D"
+                      rm -rf "$D"
+                    done
+                  fi
+                  echo "----- Inventario del PVC de respaldos -----"
+                  echo "ULTIMO: $(cat /backups/ULTIMO 2>/dev/null || echo 'ninguno')"
+                  ls -lR /backups | sed -n '1,40p'
+                  du -sh /backups
+                  [ "$OK" = "1" ] && echo "[backup] COMPLETADO $TS" || { echo "[backup] TERMINADO CON ERRORES"; exit 1; }
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+              resources:
+                requests: { cpu: 25m, memory: 32Mi }
+                limits:   { cpu: 200m, memory: 128Mi }
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: backups-pvc
