@@ -1,0 +1,217 @@
+# =============================================================================
+# docker-compose.yml — Entorno LOCAL de desarrollo (espejo de lo que corre en K3s)
+# -----------------------------------------------------------------------------
+# Uso:
+#   1) Copiar variables:    cp .env.example .env
+#   2) Levantar todo:       docker compose up -d --build
+#   3) Ver estado:          docker compose ps
+#   4) Logs unificados:     docker compose logs -f
+#   5) Frontend local:      http://localhost:8080          (historial en vivo)
+#   6) API directa:         http://localhost:3001/healthz  (service1-api)
+#   7) RabbitMQ UI local:   http://localhost:15672         (user/pass del .env)
+#   8) Apagar:              docker compose down            (conserva datos)
+#                           docker compose down -v         (borra datos)
+#
+# Reglas respetadas: todas las imágenes son Alpine; las 3 BD están aisladas
+# (cada servicio solo conoce la suya); la comunicación entre servicios es
+# SOLO por eventos de RabbitMQ.
+# Los nombres de servicio coinciden con las carpetas reales y con los hosts
+# que espera el nginx del gateway (proxy_pass http://service1-api:3001/).
+# =============================================================================
+
+services:
+
+  # ---------------------------- Frontend + Gateway ---------------------------
+  frontend-gateway:
+    build: ./frontend-gateway          # Nginx Alpine: estático + proxy /api
+    image: smartgrid-frontend-gateway:local
+    container_name: sg-frontend-gateway
+    ports:
+      - "8080:80"
+    depends_on:
+      service1-api:
+        condition: service_started
+    restart: unless-stopped
+
+  # ------------------- Servicio 1: Solicitud de Demanda ----------------------
+  service1-api:
+    build: ./service1-api              # FastAPI + gunicorn (python:3.11-alpine)
+    image: smartgrid-service1-api:local
+    container_name: sg-service1-api
+    # ports:
+    #   - "3001:8000"
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER:-smartgrid}
+      RABBITMQ_PASS: ${RABBITMQ_DEFAULT_PASS:-smartgrid_local_2026}
+      DB_HOST: db1
+      DB_PORT: "5432"
+      DB_NAME: solicitudes
+      DB_USER: ${POSTGRES_USER:-smartgrid}
+      DB_PASS: ${POSTGRES_PASSWORD:-smartgrid_local_2026}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      rabbitmq-topology:
+        condition: service_completed_successfully   
+      db1:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ------------------- Servicio 2: Control de Capacidad ----------------------
+  service2-evaluator:
+    build: ./service2-evaluator        # worker pika (sin puerto HTTP)
+    image: smartgrid-service2-evaluator:local
+    container_name: sg-service2-evaluator
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER:-smartgrid}
+      RABBITMQ_PASS: ${RABBITMQ_DEFAULT_PASS:-smartgrid_local_2026}
+      DB_HOST: db2
+      DB_PORT: "5432"
+      DB_NAME: capacidad
+      DB_USER: ${POSTGRES_USER:-smartgrid}
+      DB_PASS: ${POSTGRES_PASSWORD:-smartgrid_local_2026}
+      SECTORES: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      db2:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # -------------------- Servicio 3: Tarifador de Sesión ----------------------
+  service3-manager:
+    build: ./service3-manager   
+    image: smartgrid-service3-manager:local
+    container_name: sg-service3-manager
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER:-smartgrid}
+      RABBITMQ_PASS: ${RABBITMQ_DEFAULT_PASS:-smartgrid_local_2026}
+      DB_HOST: db3
+      DB_PORT: "5432"
+      DB_NAME: facturacion
+      DB_USER: ${POSTGRES_USER:-smartgrid}
+      DB_PASS: ${POSTGRES_PASSWORD:-smartgrid_local_2026}
+      TARIFA_POR_KW_CLP: "150"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      db3:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------- Message Broker -------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: sg-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-smartgrid}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-smartgrid_local_2026}
+    ports:
+      - "15672:15672"                  # panel de administración
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    restart: unless-stopped
+
+  # ------------- Topología del broker (one-shot, espejo del Job k8s) ---------
+  rabbitmq-topology:
+    image: curlimages/curl:8.10.1
+    container_name: sg-rabbitmq-topology
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-smartgrid}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-smartgrid_local_2026}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        API="http://rabbitmq:15672/api"
+        AUTH="$$RABBITMQ_DEFAULT_USER:$$RABBITMQ_DEFAULT_PASS"
+        echo "==> Esperando que la API de management esté lista..."
+        for i in $(seq 1 30); do
+          curl -fsu "$$AUTH" "$$API/overview" > /dev/null 2>&1 && break
+          echo "    intento $$i/30 — reintentando en 2s..."
+          sleep 2
+        done
+        echo "==> Declarando exchange smartgrid.exchange (topic, durable)"
+        curl -fsu "$$AUTH" -X PUT -H "content-type: application/json" \
+          -d '{"type":"topic","durable":true}' "$$API/exchanges/%2F/smartgrid.exchange" > /dev/null
+        for COLA in solicitud.creada carga.aprobada servicio.activo; do
+          echo "==> Declarando cola $$COLA y binding"
+          curl -fsu "$$AUTH" -X PUT -H "content-type: application/json" \
+            -d '{"durable":true}' "$$API/queues/%2F/$$COLA" > /dev/null
+          curl -fsu "$$AUTH" -X POST -H "content-type: application/json" \
+            -d "{\"routing_key\":\"$$COLA\"}" "$$API/bindings/%2F/e/smartgrid.exchange/q/$$COLA" > /dev/null
+        done
+        echo "==> Topología lista."
+    restart: "no"
+
+  # ------------------------ Bases de datos aisladas --------------------------
+  db1:
+    image: postgres:15-alpine
+    container_name: sg-db1
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smartgrid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartgrid_local_2026}
+      POSTGRES_DB: solicitudes
+    volumes:
+      - db1-data:/var/lib/postgresql/data
+      - ./database/init-solicitud.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d solicitudes"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  db2:
+    image: postgres:15-alpine
+    container_name: sg-db2
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smartgrid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartgrid_local_2026}
+      POSTGRES_DB: capacidad
+    volumes:
+      - db2-data:/var/lib/postgresql/data
+      - ./database/init-capacidad.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d capacidad"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  db3:
+    image: postgres:15-alpine
+    container_name: sg-db3
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smartgrid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartgrid_local_2026}
+      POSTGRES_DB: facturacion
+    volumes:
+      - db3-data:/var/lib/postgresql/data
+      - ./database/init-tarifador.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d facturacion"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  rabbitmq-data:
+  db1-data:
+  db2-data:
+  db3-data:

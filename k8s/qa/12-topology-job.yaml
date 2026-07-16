@@ -1,0 +1,68 @@
+# =============================================================================
+# 12-topology-job.yaml  (namespace grupo4-qa)  —  Topología de RabbitMQ
+#
+# El workflow de deploy lo borra y re-aplica en cada despliegue (re-ejecución
+# garantizada); además ttlSecondsAfterFinished lo limpia solo.
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl -n grupo4-qa logs job/rabbitmq-topology
+#   kubectl -n grupo4-qa exec deploy/rabbitmq -- rabbitmqctl list_bindings
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rabbitmq-topology
+  namespace: grupo4-qa
+  labels:
+    app: rabbitmq-topology
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: qa
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 900
+  template:
+    metadata:
+      labels:
+        app: rabbitmq-topology
+        app.kubernetes.io/part-of: smartgrid
+        entorno: qa
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: topology
+          image: curlimages/curl:8.10.1
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_USER } }
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_PASS } }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              API="http://rabbitmq:15672/api"
+              AUTH="$RABBITMQ_DEFAULT_USER:$RABBITMQ_DEFAULT_PASS"
+              echo "==> Esperando a la management API de RabbitMQ..."
+              until curl -fsu "$AUTH" "$API/overview" > /dev/null 2>&1; do
+                echo "    aún no responde; reintento en 3s"; sleep 3
+              done
+              echo "==> Declarando exchange smartgrid.exchange (topic, durable)"
+              curl -fsu "$AUTH" -X PUT -H "content-type: application/json" \
+                -d '{"type":"topic","durable":true}' \
+                "$API/exchanges/%2F/smartgrid.exchange" > /dev/null
+              for COLA in solicitud.creada carga.aprobada servicio.activo; do
+                echo "==> Declarando cola $COLA y binding (routing key = $COLA)"
+                curl -fsu "$AUTH" -X PUT -H "content-type: application/json" \
+                  -d '{"durable":true}' \
+                  "$API/queues/%2F/$COLA" > /dev/null
+                curl -fsu "$AUTH" -X POST -H "content-type: application/json" \
+                  -d "{\"routing_key\":\"$COLA\"}" \
+                  "$API/bindings/%2F/e/smartgrid.exchange/q/$COLA" > /dev/null
+              done
+              echo "==> Topología lista:"
+              curl -fsu "$AUTH" "$API/bindings/%2F" | tr ',' '\n' | grep -E "destination|routing_key" || true
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits:   { cpu: 100m, memory: 64Mi }

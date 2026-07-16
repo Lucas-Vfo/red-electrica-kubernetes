@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="description"
+        content="Sistema de gestión de demanda eléctrica residencial"
+    >
+
+    <title>Smart Grid | Red Eléctrica Inteligente</title>
+
+    <link
+        rel="stylesheet"
+        href="styles.css"
+    >
+</head>
+
+<body>
+
+    <main class="app-container">
+
+        <section class="smart-grid-card">
+
+            <header class="app-header">
+
+                <div class="icon-container">
+                    ⚡
+                </div>
+
+                <div>
+                    <h1>Smart Grid</h1>
+
+                    <p>
+                        Gestión de demanda eléctrica residencial
+                    </p>
+                </div>
+
+            </header>
+
+            <section class="network-status">
+
+                <span class="status-indicator"></span>
+
+                <span>
+                    Red eléctrica disponible
+                </span>
+
+            </section>
+
+            <form id="solicitudForm">
+
+                <div class="form-group">
+
+                    <label for="idDomicilio">
+                        ID del domicilio
+                    </label>
+
+                    <input
+                        type="number"
+                        id="idDomicilio"
+                        name="id_domicilio"
+                        min="1"
+                        placeholder="Ej: 1045"
+                        required
+                    >
+
+                </div>
+
+                <div class="form-group">
+
+                    <label for="potencia">
+                        Potencia solicitada
+                    </label>
+
+                    <div class="input-unit">
+
+                        <input
+                            type="number"
+                            id="potencia"
+                            name="potencia_solicitada_kw"
+                            min="0.1"
+                            step="0.1"
+                            placeholder="Ej: 22.5"
+                            required
+                        >
+
+                        <span>kW</span>
+
+                    </div>
+
+                </div>
+
+                <button
+                    id="submitButton"
+                    type="submit"
+                >
+                    Solicitar alta potencia
+                </button>
+
+            </form>
+
+            <section
+                id="estadoContainer"
+                class="estado-container hidden"
+                aria-live="polite"
+            >
+
+                <h2>Estado de la solicitud</h2>
+
+                <div class="status-box">
+
+                    <div
+                        id="statusLoader"
+                        class="loader"
+                    ></div>
+
+                    <div>
+
+                        <p
+                            id="estadoMensaje"
+                            class="estado-mensaje"
+                        >
+                            Procesando solicitud
+                        </p>
+
+                        <p
+                            id="estadoDetalle"
+                            class="estado-detalle"
+                        >
+                        </p>
+
+                    </div>
+
+                </div>
+
+                <div
+                    id="detalleServicio"
+                    class="service-detail"
+                ></div>
+
+            </section>
+
+        </section>
+
+        <section class="smart-grid-card historial-card">
+
+            <header class="historial-header">
+
+                <h2>Historial de solicitudes</h2>
+
+                <span
+                    id="historialEstado"
+                    class="historial-actualizacion"
+                >
+                    Conectando…
+                </span>
+
+            </header>
+
+            <div class="historial-tabla-contenedor">
+
+                <table class="historial-tabla">
+
+                    <thead>
+                        <tr>
+                            <th>ID solicitud</th>
+                            <th>Domicilio</th>
+                            <th>Potencia</th>
+                            <th>Estado</th>
+                            <th>Hora</th>
+                        </tr>
+                    </thead>
+
+                    <tbody id="historialBody">
+                        <tr>
+                            <td
+                                colspan="5"
+                                class="historial-vacio"
+                            >
+                                Cargando historial…
+                            </td>
+                        </tr>
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </section>
+
+    </main>
+
+    <script src="app.js"></script>
+
+</body>
+
+</html>

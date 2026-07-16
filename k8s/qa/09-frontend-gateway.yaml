@@ -1,0 +1,59 @@
+# =============================================================================
+# 09-frontend-gateway.yaml  (namespace grupo4-qa)
+#   - API Gateway: proxy /api/ -> http://service1-api:3001/
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get pods,svc -n grupo4-qa -l app=frontend-gateway
+#   kubectl exec -n grupo4-qa deploy/frontend-gateway -- wget -qO- localhost/health
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-gateway
+  namespace: grupo4-qa
+  labels:
+    app: frontend-gateway
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: qa
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: frontend-gateway }
+  template:
+    metadata:
+      labels:
+        app: frontend-gateway
+        app.kubernetes.io/part-of: smartgrid
+        entorno: qa
+    spec:
+      containers:
+        - name: frontend-gateway
+          image: ghcr.io/lucas-vfo/smartgrid-frontend-gateway:qa
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet: { path: /health, port: 80 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 80 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits:   { cpu: 150m, memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-gateway
+  namespace: grupo4-qa
+  labels: { app: frontend-gateway, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+spec:
+  type: ClusterIP
+  selector: { app: frontend-gateway }
+  ports:
+    - port: 80
+      targetPort: 80

@@ -1,0 +1,88 @@
+# =============================================================================
+# restore-qa.yaml  —  Restauración de las 3 BDs desde backups-pvc (grupo4-qa)
+#
+# Job MANUAL de emergencia (no forma parte del deploy automático): se aplica
+# a demanda cuando hay que recuperar datos, p. ej. en la prueba de resiliencia
+# de la defensa (el docente elimina una BD y se restaura desde el respaldo).
+#
+# Por defecto usa el ÚLTIMO respaldo completo (puntero /backups/ULTIMO que
+# escribe el CronJob backup-postgres). Para usar un respaldo específico,
+# poner su timestamp en la variable SNAPSHOT (ej: "2026-07-16T18-40-00Z").
+#
+# Los dumps se generaron con --clean --if-exists: la restauración deja cada
+# tabla exactamente como estaba en el momento del respaldo.
+# -----------------------------------------------------------------------------
+# Uso (los Jobs son inmutables: borrar el anterior antes de re-aplicar):
+#   kubectl -n grupo4-qa delete job restore-postgres --ignore-not-found
+#   kubectl apply -f k8s/restore/restore-qa.yaml
+#   kubectl -n grupo4-qa logs -f job/restore-postgres
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: restore-postgres
+  namespace: grupo4-qa
+  labels:
+    app: restore-postgres
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: qa
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 1800
+  template:
+    metadata:
+      labels:
+        app: restore-postgres
+        app.kubernetes.io/part-of: smartgrid
+        entorno: qa
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: restore
+          image: postgres:15-alpine
+          env:
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_USER } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
+            - name: SNAPSHOT           # vacío = usar /backups/ULTIMO
+              value: ""
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              SNAP="${SNAPSHOT:-$(cat /backups/ULTIMO 2>/dev/null || true)}"
+              if [ -z "$SNAP" ] || [ ! -d "/backups/$SNAP" ]; then
+                echo "[restore] ERROR: no hay respaldo disponible (SNAPSHOT='$SNAP')"
+                echo "[restore] respaldos presentes:"; ls -1 /backups || true
+                exit 1
+              fi
+              echo "[restore] usando respaldo: $SNAP"
+              for PAR in "db1 solicitudes" "db2 capacidad" "db3 facturacion"; do
+                set -- $PAR; HOST=$1; DB=$2
+                F="/backups/$SNAP/$HOST-$DB.sql.gz"
+                if [ ! -f "$F" ]; then
+                  echo "[restore] ERROR: no existe $F"; exit 1
+                fi
+                echo "[restore] esperando a que $HOST acepte conexiones..."
+                until pg_isready -h "$HOST" -U "$POSTGRES_USER" -d "$DB" -t 3 >/dev/null 2>&1; do
+                  sleep 3
+                done
+                echo "[restore] restaurando $HOST/$DB desde $F"
+                gunzip -c "$F" | psql -h "$HOST" -U "$POSTGRES_USER" -d "$DB" -v ON_ERROR_STOP=1 -q
+                echo "[restore] OK $HOST/$DB"
+              done
+              echo "[restore] RESTAURACION COMPLETA (respaldo $SNAP)"
+          volumeMounts:
+            - name: backups
+              mountPath: /backups
+              readOnly: true
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits:   { cpu: 200m, memory: 128Mi }
+      volumes:
+        - name: backups
+          persistentVolumeClaim:
+            claimName: backups-pvc

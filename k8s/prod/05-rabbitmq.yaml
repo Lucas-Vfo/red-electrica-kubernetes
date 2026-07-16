@@ -1,0 +1,93 @@
+# =============================================================================
+# 05-rabbitmq.yaml  (namespace grupo4-prod)  —  Message Broker
+# PVC + Deployment (rabbitmq:3-management-alpine) + Service (amqp + panel).
+#
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get pods,svc -n grupo4-prod -l app=rabbitmq
+#   kubectl exec -n grupo4-prod deploy/rabbitmq -- rabbitmq-diagnostics -q ping
+#   kubectl exec -n grupo4-prod deploy/rabbitmq -- rabbitmqctl list_bindings
+#   kubectl port-forward -n grupo4-prod svc/rabbitmq 15672:15672  # panel web
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rabbitmq-pvc
+  namespace: grupo4-prod
+  labels: { app: rabbitmq, app.kubernetes.io/part-of: smartgrid, entorno: prod }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: grupo4-prod
+  labels:
+    app: rabbitmq
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: prod
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate                    
+  selector:
+    matchLabels: { app: rabbitmq }
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+        app.kubernetes.io/part-of: smartgrid
+        entorno: prod
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3-management-alpine
+          ports:
+            - { name: amqp, containerPort: 5672 }
+            - { name: management, containerPort: 15672 }
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_USER } }
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_PASS } }
+          volumeMounts:
+            - name: datos-rabbit
+              mountPath: /var/lib/rabbitmq
+          readinessProbe:
+            exec: { command: ["rabbitmq-diagnostics","-q","ping"] }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 15        # el ping de Erlang es lento en CPU limitada
+            failureThreshold: 6
+          livenessProbe:
+            exec: { command: ["rabbitmq-diagnostics","-q","ping"] }
+            initialDelaySeconds: 90    # RabbitMQ tarda ~40s en bootear; damos aire
+            periodSeconds: 30
+            timeoutSeconds: 15        # sin esto usa 1s por defecto y mata un pod sano
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+      volumes:
+        - name: datos-rabbit
+          persistentVolumeClaim:
+            claimName: rabbitmq-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: grupo4-prod
+  labels: { app: rabbitmq, app.kubernetes.io/part-of: smartgrid, entorno: prod }
+spec:
+  type: ClusterIP
+  selector: { app: rabbitmq }
+  ports:
+    - { name: amqp, port: 5672, targetPort: 5672 }
+    - { name: management, port: 15672, targetPort: 15672 }

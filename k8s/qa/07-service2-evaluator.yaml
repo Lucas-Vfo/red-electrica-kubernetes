@@ -1,0 +1,61 @@
+# =============================================================================
+# 07-service2-evaluator.yaml  (namespace grupo4-qa)  —  Servicio 2: Control de Capacidad
+# Worker pika PURO (event driven): consume `solicitud.creada`, descuenta
+# capacidad en db2 y publica `carga.aprobada`.
+# NO expone puerto HTTP -> sin Service y sin probes TCP (antes causaban CrashLoopBackOff).
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get pods -n grupo4-qa -l app=service2-evaluator
+#   kubectl logs -n grupo4-qa deploy/service2-evaluator -f
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service2-evaluator
+  namespace: grupo4-qa
+  labels:
+    app: service2-evaluator
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: qa
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: service2-evaluator }
+  template:
+    metadata:
+      labels:
+        app: service2-evaluator
+        app.kubernetes.io/part-of: smartgrid
+        entorno: qa
+    spec:
+      containers:
+        - name: service2-evaluator
+          image: ghcr.io/lucas-vfo/smartgrid-service2-evaluator:qa
+          imagePullPolicy: Always
+          env:
+            - { name: DB_HOST, value: "db2" }
+            - { name: DB_NAME, value: "capacidad" }
+            - name: DB_PORT
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: DB_PORT } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_USER } }
+            - name: DB_PASS
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
+            - name: RABBITMQ_HOST
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_HOST } }
+            - name: RABBITMQ_PORT
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_PORT } }
+            - name: RABBITMQ_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_USER } }
+            - name: RABBITMQ_PASS
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_PASS } }
+            - name: SECTORES
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: SECTORES } }
+          livenessProbe:
+            exec: { command: ["sh","-c","pgrep -f worker.py"] }
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits:   { cpu: 200m, memory: 128Mi }

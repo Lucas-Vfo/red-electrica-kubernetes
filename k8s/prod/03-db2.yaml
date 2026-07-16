@@ -1,0 +1,97 @@
+# =============================================================================
+# 03-db2.yaml  (namespace grupo4-prod)  —  Base de datos del Servicio 2
+# Capacidad de los transformadores por sector (el Servicio 2 descuenta kW).
+# Init: ConfigMap db2-init (copia de database/init-capacidad.sql).
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get pvc,pods,svc -n grupo4-prod -l app=db2
+#   kubectl exec -n grupo4-prod deploy/db2 -- psql -U smartgrid -d capacidad \
+#       -c "SELECT * FROM transformadores;"
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db2-pvc
+  namespace: grupo4-prod
+  labels: { app: db2, app.kubernetes.io/part-of: smartgrid, entorno: prod }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db2
+  namespace: grupo4-prod
+  labels:
+    app: db2
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: prod
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: db2 }
+  template:
+    metadata:
+      labels:
+        app: db2
+        app.kubernetes.io/part-of: smartgrid
+        entorno: prod
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
+            - name: POSTGRES_DB
+              value: capacidad
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          readinessProbe:
+            exec: { command: ["sh","-c","pg_isready -U $POSTGRES_USER -d capacidad"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["sh","-c","pg_isready -U $POSTGRES_USER -d capacidad"] }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { cpu: 300m, memory: 256Mi }
+      volumes:
+        - name: datos
+          persistentVolumeClaim:
+            claimName: db2-pvc
+        - name: init-sql
+          configMap:
+            name: db2-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db2
+  namespace: grupo4-prod
+  labels: { app: db2, app.kubernetes.io/part-of: smartgrid, entorno: prod }
+spec:
+  type: ClusterIP
+  selector: { app: db2 }
+  ports:
+    - port: 5432
+      targetPort: 5432

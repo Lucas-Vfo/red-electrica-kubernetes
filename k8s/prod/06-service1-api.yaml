@@ -1,0 +1,81 @@
+# =============================================================================
+# 06-service1-api.yaml  (namespace grupo4-prod)  —  Servicio 1: Solicitud de Demanda
+# FastAPI/gunicorn escucha en el puerto 8000 (REST) y además consume el evento
+# `servicio.activo` para actualizar el estado del historial en db1.
+#
+# El Service se llama "service1-api" y publica 3001 -> 8000 para calzar con el
+# proxy del gateway (nginx.conf: proxy_pass http://service1-api:3001/)
+#
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get pods,svc -n grupo4-prod -l app=service1-api
+#   kubectl logs -n grupo4-prod deploy/service1-api
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service1-api
+  namespace: grupo4-prod
+  labels:
+    app: service1-api
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: service1-api }
+  template:
+    metadata:
+      labels:
+        app: service1-api
+        app.kubernetes.io/part-of: smartgrid
+        entorno: prod
+    spec:
+      containers:
+        - name: service1-api
+          image: ghcr.io/lucas-vfo/smartgrid-service1-api:prod
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - { name: DB_HOST, value: "db1" }
+            - { name: DB_NAME, value: "solicitudes" }
+            - name: DB_PORT
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: DB_PORT } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_USER } }
+            - name: DB_PASS                     
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
+            - name: RABBITMQ_HOST
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_HOST } }
+            - name: RABBITMQ_PORT
+              valueFrom: { configMapKeyRef: { name: smartgrid-config, key: RABBITMQ_PORT } }
+            - name: RABBITMQ_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_USER } }
+            - name: RABBITMQ_PASS                
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: RABBITMQ_DEFAULT_PASS } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits:   { cpu: 250m, memory: 192Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service1-api
+  namespace: grupo4-prod
+  labels: { app: service1-api, app.kubernetes.io/part-of: smartgrid, entorno: prod }
+spec:
+  type: ClusterIP
+  selector: { app: service1-api }
+  ports:
+    - port: 3001          
+      targetPort: 8000    

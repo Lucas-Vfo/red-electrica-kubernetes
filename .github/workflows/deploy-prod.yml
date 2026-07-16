@@ -1,0 +1,115 @@
+# =============================================================================
+# deploy-prod.yml  —  CI/CD del entorno PRODUCTIVO
+# Disparo: cada push (merge de PR) a la rama "main".
+# Idéntico a deploy-qa.yml pero apunta al namespace grupo4-prod
+# =============================================================================
+name: Deploy PROD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) Construir y publicar las 4 imágenes de aplicación en GHCR
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        component: [service1-api, service2-evaluator, service3-manager, frontend-gateway]
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Owner de GHCR en minúsculas
+        id: vars
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Login en GHCR (usa el token integrado, no requiere secrets)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preparar Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push  (${{ matrix.component }})
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.component }}
+          push: true
+          tags: |
+            ghcr.io/${{ steps.vars.outputs.owner }}/smartgrid-${{ matrix.component }}:prod
+            ghcr.io/${{ steps.vars.outputs.owner }}/smartgrid-${{ matrix.component }}:${{ github.sha }}
+
+  # ---------------------------------------------------------------------------
+  # 2) Desplegar en el clúster K3s (namespace grupo4-prod)
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Instalar kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configurar acceso al clúster
+        run: |
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > kubeconfig.yaml
+          export KUBECONFIG=$PWD/kubeconfig.yaml
+          kubectl config set-cluster default --server="https://${{ secrets.SERVER_IP }}:6443"
+          kubectl config set clusters.default.insecure-skip-tls-verify true
+          kubectl config unset clusters.default.certificate-authority-data
+          echo "KUBECONFIG=$PWD/kubeconfig.yaml" >> "$GITHUB_ENV"
+
+      - name: Owner de GHCR en minúsculas
+        id: vars
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Crear namespaces y topes de recursos
+        run: kubectl apply -f k8s/namespaces.yaml
+
+      - name: Asegurar pull secret de GHCR (por si los paquetes son privados)
+        run: |
+          kubectl -n grupo4-prod create secret docker-registry ghcr-pull \
+            --docker-server=ghcr.io \
+            --docker-username=${{ secrets.DOCKER_USERNAME }} \
+            --docker-password=${{ secrets.DOCKER_PASSWORD }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n grupo4-prod patch serviceaccount default \
+            -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+
+      - name: Renovar Job de topología de RabbitMQ (los Jobs completados no se re-ejecutan)
+        run: kubectl -n grupo4-prod delete job rabbitmq-topology --ignore-not-found
+
+      - name: Aplicar manifiestos de PROD
+        run: kubectl apply -f k8s/prod/
+
+      - name: Forzar rollout a la imagen recién construida (tag = SHA)
+        run: |
+          P=ghcr.io/${{ steps.vars.outputs.owner }}/smartgrid
+          kubectl -n grupo4-prod set image deployment/service1-api      service1-api=$P-service1-api:${{ github.sha }}
+          kubectl -n grupo4-prod set image deployment/service2-evaluator service2-evaluator=$P-service2-evaluator:${{ github.sha }}
+          kubectl -n grupo4-prod set image deployment/service3-manager  service3-manager=$P-service3-manager:${{ github.sha }}
+          kubectl -n grupo4-prod set image deployment/frontend-gateway  frontend-gateway=$P-frontend-gateway:${{ github.sha }}
+
+      - name: Esperar a que todo quede disponible
+        run: |
+          for d in db1 db2 db3 rabbitmq service1-api service2-evaluator service3-manager frontend-gateway; do
+            kubectl -n grupo4-prod rollout status deployment/$d --timeout=180s
+          done
+          kubectl get pods,svc,ingress,cronjob -n grupo4-prod

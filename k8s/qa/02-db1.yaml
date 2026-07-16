@@ -1,0 +1,97 @@
+# =============================================================================
+# 02-db1.yaml  (namespace grupo4-qa)  —  Base de datos del Servicio 1
+# PVC (datos persistentes) + Deployment (postgres:15-alpine) + Service ClusterIP
+# AISLAMIENTO: sólo el Servicio 1 conoce este host "db1". Nadie más lo consulta.
+# PROD: cambiar namespace -> grupo4-prod.
+# -----------------------------------------------------------------------------
+# Verificar:
+#   kubectl get pvc,pods,svc -n grupo4-qa -l app=db1
+#   kubectl exec -n grupo4-qa deploy/db1 -- pg_isready -U smartgrid -d solicitudes
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db1-pvc
+  namespace: grupo4-qa
+  labels: { app: db1, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path          # StorageClass por defecto de K3s
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db1
+  namespace: grupo4-qa
+  labels:
+    app: db1
+    app.kubernetes.io/part-of: smartgrid
+    app.kubernetes.io/managed-by: grupo4
+    entorno: qa
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate                      # una sola réplica con PVC RWO
+  selector:
+    matchLabels: { app: db1 }
+  template:
+    metadata:
+      labels:
+        app: db1
+        app.kubernetes.io/part-of: smartgrid
+        entorno: qa
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: smartgrid-secrets, key: POSTGRES_PASSWORD } }
+            - name: POSTGRES_DB
+              value: solicitudes
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata   # subdir para evitar lost+found
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          readinessProbe:
+            exec: { command: ["sh","-c","pg_isready -U $POSTGRES_USER -d solicitudes"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["sh","-c","pg_isready -U $POSTGRES_USER -d solicitudes"] }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { cpu: 300m, memory: 256Mi }
+      volumes:
+        - name: datos
+          persistentVolumeClaim:
+            claimName: db1-pvc
+        - name: init-sql
+          configMap:
+            name: db1-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db1
+  namespace: grupo4-qa
+  labels: { app: db1, app.kubernetes.io/part-of: smartgrid, entorno: qa }
+spec:
+  type: ClusterIP
+  selector: { app: db1 }
+  ports:
+    - port: 5432
+      targetPort: 5432
