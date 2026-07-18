@@ -63,7 +63,7 @@ def get_db_connection() -> Optional[object]:
 
 class SolicitudRequest(BaseModel):
     id_domicilio: int
-    potencia_solicitada_kw: float = Field(..., gt=0)
+    potencia_solicitada_kw: float = Field(..., gt=0, le=999)
 
 
 def build_rabbitmq_parameters() -> pika.ConnectionParameters:
