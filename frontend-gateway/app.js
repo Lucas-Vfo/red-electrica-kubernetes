@@ -11,6 +11,7 @@ const historialBody = document.getElementById("historialBody");
 const historialEstado = document.getElementById("historialEstado");
 
 const HISTORIAL_INTERVALO_MS = 3000;
+let idSolicitudActiva = null;
 
 solicitudForm.addEventListener("submit", procesarSolicitud);
 
@@ -59,6 +60,7 @@ async function procesarSolicitud(event) {
         }
 
         mostrarSolicitudCreada(responseBody);
+        idSolicitudActiva = responseBody.id_solicitud;
         cargarHistorial(); // refresco inmediato: la fila aparece "En evaluación"
     } catch (error) {
         console.error("Error al registrar la solicitud:", error);
@@ -165,6 +167,26 @@ async function cargarHistorial() {
         }
         const solicitudes = await response.json();
         renderizarHistorial(solicitudes);
+        if (idSolicitudActiva) {
+            const solicitudActualizada = solicitudes.find(s => s.id_solicitud === idSolicitudActiva);
+            
+            if (solicitudActualizada && solicitudActualizada.estado.toLowerCase() !== "en evaluación") {
+                
+                statusLoader.classList.add("hidden"); 
+                
+                if (solicitudActualizada.estado.toLowerCase() === "activo") {
+                    estadoMensaje.className = "estado-mensaje success-text";
+                    estadoMensaje.textContent = "Solicitud Aprobada";
+                    estadoDetalle.textContent = "La red eléctrica ha aceptado la carga de alta potencia para tu domicilio.";
+                } else if (solicitudActualizada.estado.toLowerCase() === "rechazado") {
+                    estadoMensaje.className = "estado-mensaje error-text";
+                    estadoMensaje.textContent = "Solicitud Rechazada";
+                    estadoDetalle.textContent = "La capacidad del transformador de tu sector ha sido superada.";
+                }
+                
+                idSolicitudActiva = null; 
+            }
+        }
         historialEstado.textContent =
             "Actualizado " + new Date().toLocaleTimeString("es-CL");
         historialEstado.classList.remove("historial-error");
