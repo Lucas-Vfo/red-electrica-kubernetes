@@ -105,6 +105,14 @@ def ensure_rabbitmq_channel() -> pika.channel.Channel:
 
 @app.on_event("startup")
 def on_startup() -> None:
+    conn = get_db_connection()
+    if conn is not None:
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS tarifa DECIMAL(10,2);")
+            logger.info("Esquema db1 listo")
+        except Exception as exc:
+            logger.warning("No se pudo verificar la columna tarifa: %s", exc)
     try:
         ensure_rabbitmq_channel()
         logger.info("Servicio API iniciado y conectado a RabbitMQ")
@@ -175,15 +183,14 @@ def crear_solicitud(payload: SolicitudRequest):
 
 @app.get("/solicitudes")
 def listar_solicitudes(limit: int = 50):
-    """Historial para el frontend (más recientes primero). El frontend lo
-    consulta cada pocos segundos: así ve el estado en tiempo real."""
+    """Historial para el frontend (más recientes primero)."""
     conn = get_db_connection()
     if conn is None:
         raise HTTPException(status_code=503, detail="Base de datos de solicitudes no disponible")
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT id_solicitud, id_domicilio, potencia_solicitada_kw, estado, timestamp"
+                "SELECT id_solicitud, id_domicilio, potencia_solicitada_kw, estado, timestamp, tarifa"
                 " FROM solicitudes ORDER BY timestamp DESC, id_solicitud DESC LIMIT %s",
                 (max(1, min(int(limit), 200)),),
             )
@@ -198,6 +205,7 @@ def listar_solicitudes(limit: int = 50):
             "potencia_solicitada_kw": float(fila[2]),
             "estado": fila[3],
             "timestamp": fila[4].isoformat() + "Z",
+            "tarifa": float(fila[5]) if fila[5] is not None else None,
         }
         for fila in filas
     ]
@@ -226,23 +234,25 @@ def healthz():
 
 
 def aplicar_estado_final(ch, method, properties, body: bytes) -> None:
-    """Consume `servicio.activo` (Servicio 3) y actualiza el estado en db1:
-    'En evaluación' -> 'activo' | 'rechazado'."""
+    """Consume `servicio.activo` (Servicio 3) y actualiza el estado y tarifa en db1."""
     try:
         evento = json.loads(body.decode("utf-8"))
         conn = get_db_connection()
         if conn is None:
             raise RuntimeError("db1 no disponible")
+
+        tarifa = evento.get("tarifa_por_kw_clp")
+
         with conn.cursor() as cursor:
             cursor.execute(
-                "UPDATE solicitudes SET estado = %s WHERE id_solicitud = %s",
-                (str(evento.get("estado_servicio", "desconocido")), evento["id_solicitud"]),
+                "UPDATE solicitudes SET estado = %s, tarifa = %s WHERE id_solicitud = %s",
+                (str(evento.get("estado_servicio", "desconocido")), tarifa, evento["id_solicitud"]),
             )
-        logger.info("Estado final aplicado: %s -> %s", evento["id_solicitud"], evento.get("estado_servicio"))
+        logger.info("Estado final aplicado: %s -> %s (Tarifa: %s)", evento["id_solicitud"], evento.get("estado_servicio"), tarifa)
         ch.basic_ack(delivery_tag=method.delivery_tag)
     except Exception:
         logger.exception("Error aplicando estado final; se reintentará")
-        time.sleep(2)  # evita un bucle caliente de re-entregas
+        time.sleep(2)
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
 

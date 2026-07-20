@@ -55,7 +55,7 @@ async function procesarSolicitud(event) {
 
         const responseBody = await leerRespuesta(response);
 
-        if (!response.ok) {
+        if (!response.ok) { 
             throw new Error(obtenerMensajeError(responseBody, response.status));
         }
 
@@ -114,6 +114,7 @@ function mostrarSolicitudCreada(data) {
         <p><strong>ID domicilio:</strong> ${escaparHtml(data.id_domicilio)}</p>
         <p><strong>Potencia solicitada:</strong> ${escaparHtml(data.potencia_solicitada_kw)} kW</p>
         <p><strong>Fecha de solicitud:</strong> ${formatearFecha(data.timestamp)}</p>
+        <p><strong>Tarifa a pagar:</strong> <span id="tarifaDetalle">En evaluación…</span></p>
     `;
 }
 
@@ -172,16 +173,23 @@ async function cargarHistorial() {
             
             if (solicitudActualizada && solicitudActualizada.estado.toLowerCase() !== "en evaluación") {
                 
-                statusLoader.classList.add("hidden"); 
+                statusLoader.classList.add("hidden");
+                const tarifaElem = document.getElementById("tarifaDetalle");
                 
                 if (solicitudActualizada.estado.toLowerCase() === "activo") {
                     estadoMensaje.className = "estado-mensaje success-text";
                     estadoMensaje.textContent = "Solicitud Aprobada";
                     estadoDetalle.textContent = "La red eléctrica ha aceptado la carga de alta potencia para tu domicilio.";
+                    if (tarifaElem) {
+                        tarifaElem.textContent = formatearTarifa(solicitudActualizada.tarifa);
+                    }
                 } else if (solicitudActualizada.estado.toLowerCase() === "rechazado") {
                     estadoMensaje.className = "estado-mensaje error-text";
                     estadoMensaje.textContent = "Solicitud Rechazada";
                     estadoDetalle.textContent = "La capacidad del transformador de tu sector ha sido superada.";
+                    if (tarifaElem) {
+                        tarifaElem.textContent = "N/A (Sin cobro)";
+                    }
                 }
                 
                 idSolicitudActiva = null; 
@@ -201,7 +209,7 @@ async function cargarHistorial() {
 function renderizarHistorial(solicitudes) {
     if (!Array.isArray(solicitudes) || solicitudes.length === 0) {
         historialBody.innerHTML =
-            '<tr><td colspan="5" class="historial-vacio">Aún no hay solicitudes registradas.</td></tr>';
+            '<tr><td colspan="6" class="historial-vacio">Aún no hay solicitudes registradas.</td></tr>';
         return;
     }
 
@@ -216,6 +224,7 @@ function renderizarHistorial(solicitudes) {
                         ${etiquetaDeEstado(solicitud.estado)}
                     </span>
                 </td>
+                <td>${formatearTarifa(solicitud.tarifa)}</td>
                 <td>${formatearFecha(solicitud.timestamp)}</td>
             </tr>
         `)
@@ -240,7 +249,12 @@ function escaparHtml(valor) {
     return elemento.innerHTML;
 }
 
+function formatearTarifa(tarifa) {
+    if (tarifa === null || tarifa === undefined) {
+        return "-";
+    }
+    return `$${Number(tarifa).toLocaleString("es-CL")} CLP`;
+}
 
-/* Arranque: primera carga + refresco periódico */
 cargarHistorial();
 setInterval(cargarHistorial, HISTORIAL_INTERVALO_MS);
