@@ -146,19 +146,23 @@ def callback(ch: pika.channel.Channel, method, properties, body: bytes) -> None:
         payload = json.loads(body.decode("utf-8"))
         logger.info("Mensaje recibido de %s: %s", INPUT_QUEUE, payload)
         refresh_db_connection()
+        potencia = float(payload.get("potencia_solicitada_kw", 0))
+
         if payload.get("aprobado") is True:
             estado = "activo"
-            tarifa = 150
+            tarifa_final = potencia * 150 
         else:
             estado = "rechazado"
-            tarifa = 0
+            tarifa_final = 0
+
         event = {
             "id_solicitud": payload["id_solicitud"],
             "id_domicilio": int(payload["id_domicilio"]),
-            "tarifa_por_kw_clp": tarifa,
+            "tarifa_por_kw_clp": tarifa_final,
             "estado_servicio": estado,
             "timestamp_inicio": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
         }
+        
         save_service_state(event, db_conn)
         publish_result(ch, event)
         ch.basic_ack(delivery_tag=method.delivery_tag)
